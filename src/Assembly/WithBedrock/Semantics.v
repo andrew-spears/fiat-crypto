@@ -251,7 +251,7 @@ Definition DenoteNormalInstruction (st : machine_state) (instr : NormalInstructi
     let v := v1 * v2 in
     lo <- resize_reg rax;
     hi <- (if (s =? 8)%N
-           then Some ah
+           then Some (ScalarReg ah)
            else resize_reg rdx);
     st <- SetOperand sa s st lo v;
     st <- SetOperand sa s st hi (Z.shiftr v (Z.of_N s));

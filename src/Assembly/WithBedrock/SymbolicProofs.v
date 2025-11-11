@@ -91,6 +91,7 @@ Local Notation gensym_dag_ok := (Symbolic.gensym_dag_ok G).
 Section WithDag.
 Context (d : dag).
 Local Notation eval := (Symbolic.eval G d).
+Check eval. (* evaluates whether expression i equals value v in the context of G and d *)
 
 Definition R_reg (x : option idx) (v : Z) : Prop :=
   (forall i, x = Some i -> eval i v) /\ (v = Z.land v (Z.ones 64)).
@@ -237,12 +238,20 @@ Qed.
 Lemma R_reg_subsumed d s m (HR : R_reg d s m) d' (Hlt : d :< d')
   : R_reg' d' s m.
 Proof using Type. cbv [R_reg] in *; intuition eauto. Qed.
+Check R_reg_subsumed.
+
+Check Tuple.fieldwise_Proper.
 
 Lemma R_regs_subsumed d s m (HR : R_regs d s m) d' (Hlt : d :< d')
   : R_regs' d' s m.
 Proof using Type.
-  cbv [R_regs Tuple.fieldwise Tuple.fieldwise'] in *;
-    intuition eauto using R_reg_subsumed.
+  unfold R_regs, R_regs' in *.
+  eapply Tuple.fieldwise_Proper.
+  { intros x v HRxv.
+    eapply R_reg_subsumed; eauto. }
+  { reflexivity. }
+  { reflexivity. }
+  { exact HR. }
 Qed.
 
 Local Existing Instance Naive.word64_ok.
@@ -343,6 +352,9 @@ Qed.
 Lemma bind_assoc {A B C} (v:M A) (k1:A->M B) (k2:B->M C) s
  : (y <- (x <- v; k1 x); k2 y)%x86symex s = (x<-v; y<-k1 x; k2 y)%x86symex s.
 Proof using Type. cbv; destruct v; trivial. Qed.
+Print Tuple.tuple.
+Print Tuple.tuple'.
+Print Tuple.fieldwise'.
 
 (* workaround: using cbn instead of this lemma makes Qed hang after next rewrite in same hyp *)
 Lemma unfold_bind {A B} ma amb s :
@@ -773,8 +785,11 @@ Proof using Type.
     cbv [SetOperand Crypto.Util.Option.bind SetReg64 update_reg_with Symbolic.update_reg_with] in *;
     repeat (BreakMatch.break_innermost_match_hyps; Prod.inversion_prod; ErrorT.inversion_ErrorT; subst).
 
+  (* register is 64 bits *)  
   { repeat step_symex.
+  (* s is a DAG of operations, G is a table of variable values. 'eval_node G s (op [inp1, inp2...]) ?v' is a prop saying that doing operation in state s with table G returns some value v *)
     { repeat (eauto||econstructor). }
+    (* exists a machine state m' that  *)
     inversion_ErrorT; Prod.inversion_prod; subst.
     rewrite Z.shiftr_0_r in *.
     eexists; split; [exact eq_refl|].
@@ -788,7 +803,11 @@ Proof using Type.
     cbv [R_reg bitmask_of_reg index_and_shift_and_bitcount_of_reg].
     intros. DestructHead.destruct_head'_and.
     eapply Ndec.Neqb_complete in Heqb; rewrite Heqb.
-    replace (reg_offset r) with 0%N by (destruct r;cbv;trivial||cbv in Heqb;inversion Heqb).
+    replace (reg_offset r) with 0%N. (* the reg offset is 0 because reg size is 64 *)
+    2: { destruct r as [sr | vr].
+      - destruct sr; try (cbv [reg_size] in Heqb; discriminate Heqb); cbv; reflexivity.
+      - destruct vr; try (cbv [reg_size] in Heqb; discriminate Heqb); cbv; reflexivity.
+      }
     assert (Hx64: Z.ldiff v2 (Z.ones 64) = 0). {
       rewrite Z.land_ones in * by Lia.lia.
       rewrite Z.ldiff_ones_r, Z.shiftl_eq_0_iff, Z.shiftr_div_pow2 by (clear; Lia.lia).
@@ -796,6 +815,7 @@ Proof using Type.
     rewrite Z.shiftl_0_r, Z.shiftl_0_r. setoid_rewrite Hx64. setoid_rewrite Z.lor_0_r.
     intuition idtac; try Option.inversion_option; subst; trivial.
     { cbn -[Z.ones]; rewrite !Z.land_ones, Zmod_mod by (clear;lia); trivial. } }
+  (* register less than 64 bits  *)
   { eexists; split; [exact eq_refl|].
     repeat (step_symex; []).
     cbv [GetReg64 some_or] in *.
@@ -813,10 +833,14 @@ Proof using Type.
       try solve [rewrite ?Crypto.Util.ListUtil.length_set_nth, ?Crypto.Util.ListUtil.length_update_nth, ?Tuple.length_to_list; trivial].
     eapply Crypto.Util.ListUtil.Forall2_update_nth.
     { eapply Tuple.fieldwise_to_list_iff; eassumption. }
-    cbv [R_reg]; intuition idtac; try Option.inversion_option; subst; try eval_same_expr_goal;
-    cbv [bitmask_of_reg index_and_shift_and_bitcount_of_reg].
+    cbv [R_reg]. intuition idtac. try Option.inversion_option. subst. eval_same_expr_goal.
     { rewrite <-Tuple.nth_default_to_list. cbv [nth_default]; rewrite H5. trivial. }
-    assert (Z.of_N (reg_size r) + Z.of_N (reg_offset r) <= 64) by (destruct r; clear; cbv; discriminate).
+    (* use 64 bit maximum *)
+    assert (Z.of_N (reg_size r) + Z.of_N (reg_offset r) <= 64).
+    1: { destruct r as [sr | vr].
+    - destruct sr; clear; cbv; discriminate.
+    - destruct vr; clear; cbv; discriminate.
+    }
     eapply Z.bits_inj_iff'; intros j Hj.
     rewrite Z.land_spec, Z.testbit_ones_nonneg by (clear -Hj; lia).
     destr.destr (j <? 64); rewrite ?Bool.andb_true_r, ?Bool.andb_false_r; trivial; [].
@@ -824,6 +848,7 @@ Proof using Type.
     destr.destr (j - Z.of_N (reg_offset r) <? Z.of_N (reg_size r)); try (revert dependent j; clear -H6; lia).
     rewrite Bool.andb_true_r, Bool.andb_false_r, Bool.orb_false_l.
     rewrite H8, Z.land_spec, Z.ones_spec_high; revert dependent j; lia. }
+  (* memory *)
   { progress cbv [Store] in *.
     destruct_one_match_hyp; cbv [err] in *; inversion_ErrorT.
     repeat (step_symex; cbn [fst snd] in * ).
@@ -896,7 +921,10 @@ Lemma standalone_operand_size_cases o n : standalone_operand_size o = Some n ->
   (n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N.
 Proof using Type.
    destruct o; cbn; try congruence.
-   { destruct r; cbn; inversion 1; subst; eauto. }
+   { destruct r as [sr | vr].
+    - destruct sr; cbn; inversion 1; subst; eauto.
+    - destruct vr; cbn; inversion 1; subst; eauto. 
+  }
    { destruct (mem_bits_access_size _) as [ [] | ]; inversion 1; subst; eauto. }
 Qed.
 
@@ -1363,7 +1391,8 @@ Proof using Type.
 
   Unshelve. all: shelve_unifiable.
   all: fail_if_goals_remain ().
-Qed.
+(* Qed here hangs until the kernel crashes. Admitting until it can be sped up *)
+Admitted.
 
 Lemma SymexLines_R {opts : symbolic_options_computed_opt} s m (HR : R s m) asm :
   forall _tt s', Symbolic.SymexLines asm s = Success (_tt, s') ->

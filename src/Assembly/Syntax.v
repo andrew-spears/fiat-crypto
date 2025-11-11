@@ -17,12 +17,46 @@ Local Open Scope list_scope.
 Local Set Implicit Arguments.
 Local Set Primitive Projections.
 
-Inductive REG :=
+Inductive SCALAR_REG :=
 |     rax |     rcx |     rdx |     rbx | rsp  | rbp  | rsi  | rdi  | r8  | r9  | r10  | r11  | r12  | r13  | r14  | r15
 |     eax |     ecx |     edx |     ebx | esp  | ebp  | esi  | edi  | r8d | r9d | r10d | r11d | r12d | r13d | r14d | r15d
 |      ax |      cx |      dx |      bx |  sp  |  bp  |  si  |  di  | r8w | r9w | r10w | r11w | r12w | r13w | r14w | r15w
 | ah | al | ch | cl | dh | dl | bh | bl |  spl |  bpl |  sil |  dil | r8b | r9b | r10b | r11b | r12b | r13b | r14b | r15b
 .
+
+Derive SCALAR_REG_Listable SuchThat (@FinitelyListable SCALAR_REG SCALAR_REG_Listable) As SCALAR_REG_FinitelyListable.
+Proof. prove_ListableDerive. Qed.
+Global Existing Instances SCALAR_REG_Listable SCALAR_REG_FinitelyListable.
+Definition SCALAR_REG_beq : SCALAR_REG -> SCALAR_REG -> bool := eqb_of_listable.
+Definition SCALAR_REG_dec_bl : forall x y, SCALAR_REG_beq x y = true -> x = y := eqb_of_listable_bl.
+Definition SCALAR_REG_dec_lb : forall x y, x = y -> SCALAR_REG_beq x y = true := eqb_of_listable_lb.
+Definition SCALAR_REG_eq_dec : forall x y : SCALAR_REG, {x = y} + {x <> y} := eq_dec_of_listable.
+
+(* Vectorized registers: 64 x 64-bit registers for AVX operations *)
+(* These are decomposed lanes from ymm0-ymm15, with each ymm split into 4 lanes *)
+(* y0-y3 from ymm0, y4-y7 from ymm1, ..., y60-y63 from ymm15 *)
+Inductive VREG :=
+| y0 | y1 | y2 | y3 | y4 | y5 | y6 | y7 | y8 | y9 | y10 | y11 | y12 | y13 | y14 | y15
+| y16 | y17 | y18 | y19 | y20 | y21 | y22 | y23 | y24 | y25 | y26 | y27 | y28 | y29 | y30 | y31
+| y32 | y33 | y34 | y35 | y36 | y37 | y38 | y39 | y40 | y41 | y42 | y43 | y44 | y45 | y46 | y47
+| y48 | y49 | y50 | y51 | y52 | y53 | y54 | y55 | y56 | y57 | y58 | y59 | y60 | y61 | y62 | y63
+.
+
+Derive VREG_Listable SuchThat (@FinitelyListable VREG VREG_Listable) As VREG_FinitelyListable.
+Proof. prove_ListableDerive. Qed.
+Global Existing Instances VREG_Listable VREG_FinitelyListable.
+Definition VREG_beq : VREG -> VREG -> bool := eqb_of_listable.
+Definition VREG_dec_bl : forall x y, VREG_beq x y = true -> x = y := eqb_of_listable_bl.
+Definition VREG_dec_lb : forall x y, x = y -> VREG_beq x y = true := eqb_of_listable_lb.
+Definition VREG_eq_dec : forall x y : VREG, {x = y} + {x <> y} := eq_dec_of_listable.
+
+(* Unified register type: scalar or vector *)
+Inductive REG :=
+| ScalarReg (r : SCALAR_REG)
+| VectorReg (v : VREG)
+.
+
+Coercion ScalarReg : SCALAR_REG >-> REG.
 
 Derive REG_Listable SuchThat (@FinitelyListable REG REG_Listable) As REG_FinitelyListable.
 Proof. prove_ListableDerive. Qed.
@@ -289,17 +323,24 @@ Coercion INSTR : NormalInstruction >-> RawLine.
 Record Line := { indent : string ; rawline :> RawLine ; pre_comment_whitespace : string ; comment : option string ; line_number : N}.
 Definition Lines := list Line.
 
+Definition vreg_size (vr : VREG) : N := 64%N. (* All VREGs are 64-bit lanes *)
+Definition sreg_size (sr : SCALAR_REG) : N := 
+  match sr with
+    |(    rax |     rcx |     rdx |     rbx | rsp  | rbp  | rsi  | rdi  | r8  | r9  | r10  | r11  | r12  | r13  | r14  | r15 )
+      => 64
+    |(    eax |     ecx |     edx |     ebx | esp  | ebp  | esi  | edi  | r8d | r9d | r10d | r11d | r12d | r13d | r14d | r15d)
+      => 32
+    |(     ax |      cx |      dx |      bx |  sp  |  bp  |  si  |  di  | r8w | r9w | r10w | r11w | r12w | r13w | r14w | r15w)
+      => 16
+    |(ah | al | ch | cl | dh | dl | bh | bl |  spl |  bpl |  sil |  dil | r8b | r9b | r10b | r11b | r12b | r13b | r14b | r15b)
+      => 8
+    end.
+
 Definition reg_size (r : REG) : N :=
-      match r with
-      |(    rax |     rcx |     rdx |     rbx | rsp  | rbp  | rsi  | rdi  | r8  | r9  | r10  | r11  | r12  | r13  | r14  | r15 )
-       => 64
-      |(    eax |     ecx |     edx |     ebx | esp  | ebp  | esi  | edi  | r8d | r9d | r10d | r11d | r12d | r13d | r14d | r15d)
-       => 32
-      |(     ax |      cx |      dx |      bx |  sp  |  bp  |  si  |  di  | r8w | r9w | r10w | r11w | r12w | r13w | r14w | r15w)
-       => 16
-      |(ah | al | ch | cl | dh | dl | bh | bl |  spl |  bpl |  sil |  dil | r8b | r9b | r10b | r11b | r12b | r13b | r14b | r15b)
-       => 8
-      end.
+  match r with
+  | ScalarReg sr => (sreg_size sr)
+  | VectorReg vr => (vreg_size vr)
+  end.
 
 Definition standalone_operand_size (x : ARG) : option N :=
   match x with
@@ -345,33 +386,45 @@ Definition operand_size (x : ARG) (operation_size : N) : N :=
   end.
 
 Definition reg_offset (r : REG) : N :=
-    match r with
-    |(ah      | ch      | dh      | bh      )
-      => 8
-    | _ => 0
-    end.
-
+  match r with
+  | ScalarReg sr =>
+      (match sr with
+      |(ah      | ch      | dh      | bh      )
+        => 8
+      | _ => 0
+      end)
+  | VectorReg vr => 0  (* Vector registers have no offset *)
+  end.
+  
+Definition widest_vreg_of (vr : VREG) : VREG := vr. (* All VREGs are already at widest *)
 Definition widest_register_of (r : REG) : REG :=
   match r with
-  | ((al | ah) | ax | eax | rax) => rax
-  | ((cl | ch) | cx | ecx | rcx) => rcx
-  | ((dl | dh) | dx | edx | rdx) => rdx
-  | ((bl | bh) | bx | ebx | rbx) => rbx
-  | (spl | sp | esp | rsp) => rsp
-  | (bpl | bp | ebp | rbp) => rbp
-  | (sil | si | esi | rsi) => rsi
-  | (dil | di | edi | rdi) => rdi
-  | (r8b | r8w | r8d | r8) => r8
-  | (r9b | r9w | r9d | r9) => r9
-  | (r10b | r10w | r10d | r10) => r10
-  | (r11b | r11w | r11d | r11) => r11
-  | (r12b | r12w | r12d | r12) => r12
-  | (r13b | r13w | r13d | r13) => r13
-  | (r14b | r14w | r14d | r14) => r14
-  | (r15b | r15w | r15d | r15) => r15
+  | ScalarReg sr =>
+      ScalarReg (match sr with
+      | ((al | ah) | ax | eax | rax) => rax
+      | ((cl | ch) | cx | ecx | rcx) => rcx
+      | ((dl | dh) | dx | edx | rdx) => rdx
+      | ((bl | bh) | bx | ebx | rbx) => rbx
+      | (spl | sp | esp | rsp) => rsp
+      | (bpl | bp | ebp | rbp) => rbp
+      | (sil | si | esi | rsi) => rsi
+      | (dil | di | edi | rdi) => rdi
+      | (r8b | r8w | r8d | r8) => r8
+      | (r9b | r9w | r9d | r9) => r9
+      | (r10b | r10w | r10d | r10) => r10
+      | (r11b | r11w | r11d | r11) => r11
+      | (r12b | r12w | r12d | r12) => r12
+      | (r13b | r13w | r13d | r13) => r13
+      | (r14b | r14w | r14d | r14) => r14
+      | (r15b | r15w | r15d | r15) => r15
+      end)
+  | VectorReg vr => VectorReg (widest_vreg_of vr)  (* VREGs are already at widest *)
   end.
 
+  
 Definition widest_registers := Eval lazy in List.filter (fun x => REG_beq x (widest_register_of x)) (list_all REG).
+
+Definition max_register_bits := Eval lazy in (List.fold_right N.max 0%N (List.map reg_size (list_all REG))). (* size of the largest register *)
 
 Definition wide_reg_index_pairs := Eval lazy in List.map (fun '(n, r) => (N.of_nat n, r)) (List.enumerate widest_registers).
 
@@ -379,21 +432,21 @@ Definition eta_reg {A} : (REG -> A) -> (REG -> A).
 Proof.
   intros f r; pose (f r) as fr; destruct r.
   all: let v := eval cbv in fr in exact v.
-Defined.
+  Defined.
 
 Definition reg_index (r : REG) : N := Eval lazy in
-  eta_reg (fun r =>
-    Option.value
-      (option_map (@fst _ _) (find (fun '(n, r') => REG_beq (widest_register_of r) r') wide_reg_index_pairs))
-      0%N)
-    r.
+eta_reg (fun r =>
+Option.value
+(option_map (@fst _ _) (find (fun '(n, r') => REG_beq (widest_register_of r) r') wide_reg_index_pairs))
+0%N)
+r.
 
 Definition widest_register_of_index_opt (n : N) : option REG
   := List.nth_error (List.map (@snd _ _) wide_reg_index_pairs) (N.to_nat n).
 
 (** convenience printing function *)
 Definition widest_register_of_index (n : N) : REG
-  := Option.value (widest_register_of_index_opt n) rax.
+  := Option.value (widest_register_of_index_opt n) (ScalarReg rax).
 
 Definition widest_reg_size_of (r : REG) : N :=
   reg_size (widest_register_of_index (reg_index r)).
@@ -401,9 +454,13 @@ Definition widest_reg_size_of (r : REG) : N :=
 Definition index_and_shift_and_bitcount_of_reg (r : REG) :=
   (reg_index r, reg_offset r, reg_size r).
 
-Definition overlapping_registers (r : REG) : list REG := Eval lazy in eta_reg
-  (fun r => List.filter (fun r' => REG_beq (widest_register_of r) (widest_register_of r')) (list_all REG))
-  r.
+Definition overlapping_registers (r : REG) : list REG :=
+  match r with
+  | ScalarReg sr => 
+      List.filter (fun r' => REG_beq (widest_register_of r) (widest_register_of r')) 
+                  (List.map ScalarReg (list_all SCALAR_REG))
+  | VectorReg vr => []
+  end.
 
 Definition reg_of_index_and_shift_and_bitcount_opt :=
   fun '(index, offset, size) =>
@@ -417,6 +474,9 @@ Definition reg_of_index_and_shift_and_bitcount :=
     | Some r => r
     | None => widest_register_of_index index
     end.
+
+
+
 
 Class assembly_program_options := {
   default_rel : bool ;

@@ -44,7 +44,8 @@ Definition default_assembly_labels_fuzzy_prefixes : assembly_labels_fuzzy_prefix
 Class assembly_calling_registers_opt := assembly_calling_registers' : option (list REG).
 #[global]
 Typeclasses Opaque assembly_calling_registers_opt.
-Definition default_assembly_calling_registers := [rdi;rsi;rdx;rcx;r8;r9].
+Definition default_assembly_calling_registers := List.map ScalarReg [rdi;rsi;rdx;rcx;r8;r9].
+
 Definition assembly_calling_registers {v : assembly_calling_registers_opt} : list REG
   := Option.value v default_assembly_calling_registers.
 (** List of callee-saved / non-volatile registers *)
@@ -57,12 +58,12 @@ The registers RBX, RBP, RDI, RSI, RSP, R12, R13, R14, and R15 are considered non
 
 -----
 [22] https://docs.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170&viewFallbackFrom=vs-2019#callercallee-saved-registers *)
-Definition microsoft_x64_assembly_callee_saved_registers := [rbx;rbp;rdi;rsi;rsp;r12;r13;r14;r15].
+Definition microsoft_x64_assembly_callee_saved_registers := List.map ScalarReg [rbx;rbp;rdi;rsi;rsp;r12;r13;r14;r15].
 (* https://en.wikipedia.org/wiki/X86_calling_conventions#System_V_AMD64_ABI *)
 (* If the callee wishes to use registers RBX, RSP, RBP, and R12–R15, it must restore their original values before returning control to the caller. All other registers must be saved by the caller if it wishes to preserve their values.[25]: 16
 
 [25] Michael Matz; Jan Hubička; Andreas Jaeger; et al., eds. (2018-01-28). "System V Application Binary Interface: AMD64 Architecture Processor Supplement (With LP64 and ILP32 Programming Models) Version 1.0" (PDF). 1.0. https://github.com/hjl-tools/x86-psABI/wiki/x86-64-psABI-1.0.pdf *)
-Definition system_v_amd64_assembly_callee_saved_registers := [rbx;rsp;rbp;r12;r13;r14;r15].
+Definition system_v_amd64_assembly_callee_saved_registers := List.map ScalarReg [rbx;rsp;rbp;r12;r13;r14;r15].
 Definition default_assembly_callee_saved_registers := System_V_AMD64.
 Definition assembly_callee_saved_registers {v : assembly_callee_saved_registers_opt} : list REG
   := match v with
@@ -1452,7 +1453,7 @@ Section check_equivalence.
 
     Local Notation map_err_None v := (ErrorT.map_error (fun e => (None, e)) v).
     Local Notation map_err_Some label v := (ErrorT.map_error (fun e => (Some label, e)) v).
-
+    Print assembly_calling_registers.
     Definition map_symex_asm (inputs : list (idx + list idx)) (output_types : type_spec) (d : dag)
       : ErrorT
           (option (string (* fname *) * Lines (* asm lines *)) * EquivalenceCheckingError)

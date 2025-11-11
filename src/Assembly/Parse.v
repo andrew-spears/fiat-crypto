@@ -23,8 +23,17 @@ Local Open Scope list_scope.
 Local Open Scope string_scope.
 Local Open Scope parse_scope.
 
-Global Instance show_REG : Show REG.
+Global Instance show_SCALAR_REG : Show SCALAR_REG.
 Proof. prove_Show_enum (). Defined.
+
+Global Instance show_VREG : Show VREG.
+Proof. prove_Show_enum (). Defined.
+
+Global Instance show_REG : Show REG :=
+  fun r => match r with
+  | ScalarReg sr => show sr
+  | VectorReg vr => show vr
+  end.
 Global Instance show_lvl_REG : ShowLevel REG := show_REG.
 
 Global Instance show_FLAG : Show FLAG.

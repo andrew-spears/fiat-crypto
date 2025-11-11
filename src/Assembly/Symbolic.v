@@ -3821,7 +3821,10 @@ Definition simplify {opts : symbolic_options_computed_opt} (dag : dag) (e : node
 
 Lemma eval_simplify {opts : symbolic_options_computed_opt} G d n v : gensym_dag_ok G d -> eval_node G d n v -> eval G d (simplify d n) v.
 Proof using Type. eauto using Rewrite.eval_expr, eval_node_reveal_node_at_least. Qed.
+Locate widest_registers.
 
+
+Compute (List.length widest_registers).
 Definition reg_state := Tuple.tuple (option idx) (compute! (List.length widest_registers)).
 Definition flag_state := Tuple.tuple (option idx) 6.
 Definition mem_state := list (idx * idx).
@@ -4087,10 +4090,12 @@ Definition SetReg {opts : symbolic_options_computed_opt} {descr:description} r (
   let '(rn, lo, sz) := index_and_shift_and_bitcount_of_reg r in
   if N.eqb sz 64
   then v <- App (slice 0 64, [v]);
-       SetReg64 rn v (* works even if old value is unspecified *)
+      (* test if this will work: just red the old value anyway *)
+      (* old <- GetReg64 rn; this breaks the symbolic proof of R_SetOperand *)
+      SetReg64 rn v (* works even if old value is unspecified *)
   else old <- GetReg64 rn;
-       v <- App ((set_slice lo sz), [old; v]);
-       SetReg64 rn v.
+      v <- App ((set_slice lo sz), [old; v]);
+      SetReg64 rn v.
 
 Class AddressSize := address_size : OperationSize.
 Definition Address {opts : symbolic_options_computed_opt} {descr:description} {sa : AddressSize} (a : MEM) : M idx :=
@@ -4184,6 +4189,7 @@ Definition rcrcnt s cnt : Z :=
   Z.land cnt (Z.of_N s-1).
 
 Notation "f @ ( x , y , .. , z )" := (PreApp f (@cons pre_expr x (@cons pre_expr y .. (@cons pre_expr z nil) ..))) (at level 10) : x86symex_scope.
+
 Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:description} (instr : NormalInstruction) : M unit :=
   let stack_addr_size : AddressSize := 64%N in
   let sa : AddressSize := 64%N in
@@ -4304,7 +4310,7 @@ Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:
     vh <- Symeval (shrZ@(v,PreARG (Z.of_N s)));
     lo <- resize_reg rax;
     hi <- (if (s =? 8)%N
-           then ret ah
+           then ret (ScalarReg ah)
            else resize_reg rdx);
     _ <- SetOperand (lo:ARG) v;
     _ <- SetOperand (hi:ARG) vh;
