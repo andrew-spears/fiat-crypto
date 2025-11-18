@@ -251,7 +251,7 @@ Definition DenoteNormalInstruction (st : machine_state) (instr : NormalInstructi
     let v := v1 * v2 in
     lo <- resize_reg rax;
     hi <- (if (s =? 8)%N
-           then Some (ScalarReg ah)
+           then Some (SReg ah)
            else resize_reg rdx);
     st <- SetOperand sa s st lo v;
     st <- SetOperand sa s st hi (Z.shiftr v (Z.of_N s));
@@ -385,6 +385,24 @@ Definition DenoteNormalInstruction (st : machine_state) (instr : NormalInstructi
                SetOperand sa s st dst v
 
   | nop, [] => Some st
+
+  (* | vadd, [VReg dst; VReg src] => (* Vector addition *)
+    (* For each of 4 lanes in the YMM registers *)
+    let lane_size := 64%N in
+    let add_lane (state : machine_state) (lane_idx : N) : option machine_state :=
+      let lane := (match lane_idx with lane0 => lane0 | lane1 => lane1 | lane2 => lane2 | lane3 => lane3 | _ => lane0 end) in
+      let dst_lane := VectorReg dst in (* Would need lane indexing *)
+      let src_lane := VectorReg src in (* Would need lane indexing *)
+      v1 <- DenoteOperand sa lane_size state dst_lane;
+      v2 <- DenoteOperand sa lane_size state src_lane;
+      let v := Z.land (v1 + v2) (Z.ones (Z.of_N lane_size)) in
+      SetOperand sa lane_size state dst_lane v
+    in
+    (* Process all 4 lanes *)
+    st <- add_lane st lane0;
+    st <- add_lane st lane1;
+    st <- add_lane st lane2;
+    add_lane st lane3 *)
 
   | ret, _ => None (* not sure what to do with this ret, maybe exlude it? *)
 

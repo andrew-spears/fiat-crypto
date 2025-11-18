@@ -11,35 +11,31 @@ Require Import Crypto.Util.ListUtil.
 Require Crypto.Util.Tuple.
 Require Crypto.Util.OptionList.
 Import ListNotations.
-
 Local Open Scope list_scope.
 
 Local Set Implicit Arguments.
 Local Set Primitive Projections.
 
-Inductive SCALAR_REG :=
+Inductive SREG :=
 |     rax |     rcx |     rdx |     rbx | rsp  | rbp  | rsi  | rdi  | r8  | r9  | r10  | r11  | r12  | r13  | r14  | r15
 |     eax |     ecx |     edx |     ebx | esp  | ebp  | esi  | edi  | r8d | r9d | r10d | r11d | r12d | r13d | r14d | r15d
 |      ax |      cx |      dx |      bx |  sp  |  bp  |  si  |  di  | r8w | r9w | r10w | r11w | r12w | r13w | r14w | r15w
 | ah | al | ch | cl | dh | dl | bh | bl |  spl |  bpl |  sil |  dil | r8b | r9b | r10b | r11b | r12b | r13b | r14b | r15b
 .
 
-Derive SCALAR_REG_Listable SuchThat (@FinitelyListable SCALAR_REG SCALAR_REG_Listable) As SCALAR_REG_FinitelyListable.
+Derive SREG_Listable SuchThat (@FinitelyListable SREG SREG_Listable) As SREG_FinitelyListable.
 Proof. prove_ListableDerive. Qed.
-Global Existing Instances SCALAR_REG_Listable SCALAR_REG_FinitelyListable.
-Definition SCALAR_REG_beq : SCALAR_REG -> SCALAR_REG -> bool := eqb_of_listable.
-Definition SCALAR_REG_dec_bl : forall x y, SCALAR_REG_beq x y = true -> x = y := eqb_of_listable_bl.
-Definition SCALAR_REG_dec_lb : forall x y, x = y -> SCALAR_REG_beq x y = true := eqb_of_listable_lb.
-Definition SCALAR_REG_eq_dec : forall x y : SCALAR_REG, {x = y} + {x <> y} := eq_dec_of_listable.
+Global Existing Instances SREG_Listable SREG_FinitelyListable.
+Definition SREG_beq : SREG -> SREG -> bool := eqb_of_listable.
+Definition SREG_dec_bl : forall x y, SREG_beq x y = true -> x = y := eqb_of_listable_bl.
+Definition SREG_dec_lb : forall x y, x = y -> SREG_beq x y = true := eqb_of_listable_lb.
+Definition SREG_eq_dec : forall x y : SREG, {x = y} + {x <> y} := eq_dec_of_listable.
 
-(* Vectorized registers: 64 x 64-bit registers for AVX operations *)
-(* These are decomposed lanes from ymm0-ymm15, with each ymm split into 4 lanes *)
-(* y0-y3 from ymm0, y4-y7 from ymm1, ..., y60-y63 from ymm15 *)
+(* YMM registers: 256-bit AVX registers *)
+(* ymm0-ymm15 are the actual AVX registers, each containing 4 x 64-bit lanes *)
 Inductive VREG :=
-| y0 | y1 | y2 | y3 | y4 | y5 | y6 | y7 | y8 | y9 | y10 | y11 | y12 | y13 | y14 | y15
-| y16 | y17 | y18 | y19 | y20 | y21 | y22 | y23 | y24 | y25 | y26 | y27 | y28 | y29 | y30 | y31
-| y32 | y33 | y34 | y35 | y36 | y37 | y38 | y39 | y40 | y41 | y42 | y43 | y44 | y45 | y46 | y47
-| y48 | y49 | y50 | y51 | y52 | y53 | y54 | y55 | y56 | y57 | y58 | y59 | y60 | y61 | y62 | y63
+| ymm0 | ymm1 | ymm2 | ymm3 | ymm4 | ymm5 | ymm6 | ymm7
+| ymm8 | ymm9 | ymm10 | ymm11 | ymm12 | ymm13 | ymm14 | ymm15
 .
 
 Derive VREG_Listable SuchThat (@FinitelyListable VREG VREG_Listable) As VREG_FinitelyListable.
@@ -50,13 +46,41 @@ Definition VREG_dec_bl : forall x y, VREG_beq x y = true -> x = y := eqb_of_list
 Definition VREG_dec_lb : forall x y, x = y -> VREG_beq x y = true := eqb_of_listable_lb.
 Definition VREG_eq_dec : forall x y : VREG, {x = y} + {x <> y} := eq_dec_of_listable.
 
-(* Unified register type: scalar or vector *)
-Inductive REG :=
-| ScalarReg (r : SCALAR_REG)
-| VectorReg (v : VREG)
+(* Lane references: specific 64-bit lanes within YMM registers *)
+Inductive LANE :=
+| ymm0_lane0 | ymm0_lane1 | ymm0_lane2 | ymm0_lane3
+| ymm1_lane0 | ymm1_lane1 | ymm1_lane2 | ymm1_lane3
+| ymm2_lane0 | ymm2_lane1 | ymm2_lane2 | ymm2_lane3
+| ymm3_lane0 | ymm3_lane1 | ymm3_lane2 | ymm3_lane3
+| ymm4_lane0 | ymm4_lane1 | ymm4_lane2 | ymm4_lane3
+| ymm5_lane0 | ymm5_lane1 | ymm5_lane2 | ymm5_lane3
+| ymm6_lane0 | ymm6_lane1 | ymm6_lane2 | ymm6_lane3
+| ymm7_lane0 | ymm7_lane1 | ymm7_lane2 | ymm7_lane3
+| ymm8_lane0 | ymm8_lane1 | ymm8_lane2 | ymm8_lane3
+| ymm9_lane0 | ymm9_lane1 | ymm9_lane2 | ymm9_lane3
+| ymm10_lane0 | ymm10_lane1 | ymm10_lane2 | ymm10_lane3
+| ymm11_lane0 | ymm11_lane1 | ymm11_lane2 | ymm11_lane3
+| ymm12_lane0 | ymm12_lane1 | ymm12_lane2 | ymm12_lane3
+| ymm13_lane0 | ymm13_lane1 | ymm13_lane2 | ymm13_lane3
+| ymm14_lane0 | ymm14_lane1 | ymm14_lane2 | ymm14_lane3
+| ymm15_lane0 | ymm15_lane1 | ymm15_lane2 | ymm15_lane3
 .
 
-Coercion ScalarReg : SCALAR_REG >-> REG.
+Derive LANE_Listable SuchThat (@FinitelyListable LANE LANE_Listable) As LANE_FinitelyListable.
+Proof. prove_ListableDerive. Qed.
+Global Existing Instances LANE_Listable LANE_FinitelyListable.
+Definition LANE_beq : LANE -> LANE -> bool := eqb_of_listable.
+Definition LANE_dec_bl : forall x y, LANE_beq x y = true -> x = y := eqb_of_listable_bl.
+Definition LANE_dec_lb : forall x y, x = y -> LANE_beq x y = true := eqb_of_listable_lb.
+Definition LANE_eq_dec : forall x y : LANE, {x = y} + {x <> y} := eq_dec_of_listable.
+
+(* Unified register type: scalar or vector *)
+Inductive REG :=
+| SReg (r : SREG)
+| VReg (v : VREG)
+.
+
+Coercion SReg : SREG >-> REG.
 
 Derive REG_Listable SuchThat (@FinitelyListable REG REG_Listable) As REG_FinitelyListable.
 Proof. prove_ListableDerive. Qed.
@@ -65,6 +89,29 @@ Definition REG_beq : REG -> REG -> bool := eqb_of_listable.
 Definition REG_dec_bl : forall x y, REG_beq x y = true -> x = y := eqb_of_listable_bl.
 Definition REG_dec_lb : forall x y, x = y -> REG_beq x y = true := eqb_of_listable_lb.
 Definition REG_eq_dec : forall x y : REG, {x = y} + {x <> y} := eq_dec_of_listable.
+
+
+(* Helper: get the 4 lanes of a VREG *)
+Definition vreg_lanes (vr : VREG) : list LANE :=
+  match vr with
+  | ymm0 => [ymm0_lane0; ymm0_lane1; ymm0_lane2; ymm0_lane3]
+  | ymm1 => [ymm1_lane0; ymm1_lane1; ymm1_lane2; ymm1_lane3]
+  | ymm2 => [ymm2_lane0; ymm2_lane1; ymm2_lane2; ymm2_lane3]
+  | ymm3 => [ymm3_lane0; ymm3_lane1; ymm3_lane2; ymm3_lane3]
+  | ymm4 => [ymm4_lane0; ymm4_lane1; ymm4_lane2; ymm4_lane3]
+  | ymm5 => [ymm5_lane0; ymm5_lane1; ymm5_lane2; ymm5_lane3]
+  | ymm6 => [ymm6_lane0; ymm6_lane1; ymm6_lane2; ymm6_lane3]
+  | ymm7 => [ymm7_lane0; ymm7_lane1; ymm7_lane2; ymm7_lane3]
+  | ymm8 => [ymm8_lane0; ymm8_lane1; ymm8_lane2; ymm8_lane3]
+  | ymm9 => [ymm9_lane0; ymm9_lane1; ymm9_lane2; ymm9_lane3]
+  | ymm10 => [ymm10_lane0; ymm10_lane1; ymm10_lane2; ymm10_lane3]
+  | ymm11 => [ymm11_lane0; ymm11_lane1; ymm11_lane2; ymm11_lane3]
+  | ymm12 => [ymm12_lane0; ymm12_lane1; ymm12_lane2; ymm12_lane3]
+  | ymm13 => [ymm13_lane0; ymm13_lane1; ymm13_lane2; ymm13_lane3]
+  | ymm14 => [ymm14_lane0; ymm14_lane1; ymm14_lane2; ymm14_lane3]
+  | ymm15 => [ymm15_lane0; ymm15_lane1; ymm15_lane2; ymm15_lane3]
+  end.
+
 
 Definition CONST := Z.
 Coercion CONST_of_Z (x : Z) : CONST := x.
@@ -98,9 +145,9 @@ Global Coercion bool_of_rip_relative_kind (x : rip_relative_kind) : bool :=
   | implicitly_rip_relative => true
   | not_rip_relative => false
   end.
-Record MEM := { mem_bits_access_size : option AccessSize ; mem_base_reg : option REG ; mem_scale_reg : option (Z * REG) ; mem_base_label : option string ; mem_offset : option Z ; rip_relative : rip_relative_kind }.
+Record MEM := { mem_bits_access_size : option AccessSize ; mem_base_reg : option SREG ; mem_scale_reg : option (Z * SREG) ; mem_base_label : option string ; mem_offset : option Z ; rip_relative : rip_relative_kind }.
 
-Definition mem_of_reg (r : REG) : MEM :=
+Definition mem_of_reg (r : SREG) : MEM :=
   {| mem_base_reg := Some r ; mem_offset := None ; mem_scale_reg := None ; mem_bits_access_size := None ; mem_base_label := None ; rip_relative := not_rip_relative |}.
 
 Inductive FLAG := CF | PF | AF | ZF | SF | OF.
@@ -205,6 +252,8 @@ Inductive OpCode :=
 | test
 | xchg
 | xor
+(* Vectorized opcodes *)
+(* | vadd *)
 .
 
 Derive OpCode_Listable SuchThat (@FinitelyListable OpCode OpCode_Listable) As OpCode_FinitelyListable.
@@ -294,6 +343,7 @@ Definition accesssize_of_declaration (opc : OpCode) : option AccessSize :=
   | test
   | xchg
   | xor
+  (* | vadd *)
     => None
   end.
 
@@ -323,23 +373,26 @@ Coercion INSTR : NormalInstruction >-> RawLine.
 Record Line := { indent : string ; rawline :> RawLine ; pre_comment_whitespace : string ; comment : option string ; line_number : N}.
 Definition Lines := list Line.
 
-Definition vreg_size (vr : VREG) : N := 64%N. (* All VREGs are 64-bit lanes *)
-Definition sreg_size (sr : SCALAR_REG) : N := 
+Definition sreg_size (sr : SREG) : N :=
   match sr with
-    |(    rax |     rcx |     rdx |     rbx | rsp  | rbp  | rsi  | rdi  | r8  | r9  | r10  | r11  | r12  | r13  | r14  | r15 )
-      => 64
-    |(    eax |     ecx |     edx |     ebx | esp  | ebp  | esi  | edi  | r8d | r9d | r10d | r11d | r12d | r13d | r14d | r15d)
-      => 32
-    |(     ax |      cx |      dx |      bx |  sp  |  bp  |  si  |  di  | r8w | r9w | r10w | r11w | r12w | r13w | r14w | r15w)
-      => 16
-    |(ah | al | ch | cl | dh | dl | bh | bl |  spl |  bpl |  sil |  dil | r8b | r9b | r10b | r11b | r12b | r13b | r14b | r15b)
-      => 8
-    end.
+  |(    rax |     rcx |     rdx |     rbx | rsp  | rbp  | rsi  | rdi  | r8  | r9  | r10  | r11  | r12  | r13  | r14  | r15 )
+  => 64
+  |(    eax |     ecx |     edx |     ebx | esp  | ebp  | esi  | edi  | r8d | r9d | r10d | r11d | r12d | r13d | r14d | r15d)
+  => 32
+  |(     ax |      cx |      dx |      bx |  sp  |  bp  |  si  |  di  | r8w | r9w | r10w | r11w | r12w | r13w | r14w | r15w)
+  => 16
+  |(ah | al | ch | cl | dh | dl | bh | bl |  spl |  bpl |  sil |  dil | r8b | r9b | r10b | r11b | r12b | r13b | r14b | r15b)
+  => 8
+  end.
+
+Definition vreg_size (vr : VREG) : N := 256. (* ymm all 256 bits *)
+
+Definition lane_size (l : LANE) : N := 64. (* assuming 4 64-bits lanes per ymm reg *)
 
 Definition reg_size (r : REG) : N :=
   match r with
-  | ScalarReg sr => (sreg_size sr)
-  | VectorReg vr => (vreg_size vr)
+    | SReg sr => (sreg_size sr)
+    | VReg vr => (vreg_size vr)
   end.
 
 Definition standalone_operand_size (x : ARG) : option N :=
@@ -358,6 +411,7 @@ Definition opcode_size (op : OpCode) :=
   | _ => None
   end%N.
 
+  (* seems like operation and operand size are only used for get/set/load operations, so vreg dont need to worry about this?  *)
 Definition operation_size instr :=
   match opcode_size instr.(op) with
   | Some s => Some s | None =>
@@ -379,6 +433,7 @@ Definition operation_size instr :=
   end
   end.
 
+
 Definition operand_size (x : ARG) (operation_size : N) : N :=
   match standalone_operand_size x with
   | Some s => s
@@ -387,42 +442,46 @@ Definition operand_size (x : ARG) (operation_size : N) : N :=
 
 Definition reg_offset (r : REG) : N :=
   match r with
-  | ScalarReg sr =>
+  | SReg sr =>
       (match sr with
       |(ah      | ch      | dh      | bh      )
         => 8
       | _ => 0
       end)
-  | VectorReg vr => 0  (* Vector registers have no offset *)
+  | VReg vr => 0  (* Vector registers have no offset *)
   end.
   
+Definition widest_sreg_of (sr : SREG) : SREG := 
+  match sr with
+    | ((al | ah) | ax | eax | rax) => rax
+    | ((cl | ch) | cx | ecx | rcx) => rcx
+    | ((dl | dh) | dx | edx | rdx) => rdx
+    | ((bl | bh) | bx | ebx | rbx) => rbx
+    | (spl | sp | esp | rsp) => rsp
+    | (bpl | bp | ebp | rbp) => rbp
+    | (sil | si | esi | rsi) => rsi
+    | (dil | di | edi | rdi) => rdi
+    | (r8b | r8w | r8d | r8) => r8
+    | (r9b | r9w | r9d | r9) => r9
+    | (r10b | r10w | r10d | r10) => r10
+    | (r11b | r11w | r11d | r11) => r11
+    | (r12b | r12w | r12d | r12) => r12
+    | (r13b | r13w | r13d | r13) => r13
+    | (r14b | r14w | r14d | r14) => r14
+    | (r15b | r15w | r15d | r15) => r15
+  end.
 Definition widest_vreg_of (vr : VREG) : VREG := vr. (* All VREGs are already at widest *)
+
 Definition widest_register_of (r : REG) : REG :=
   match r with
-  | ScalarReg sr =>
-      ScalarReg (match sr with
-      | ((al | ah) | ax | eax | rax) => rax
-      | ((cl | ch) | cx | ecx | rcx) => rcx
-      | ((dl | dh) | dx | edx | rdx) => rdx
-      | ((bl | bh) | bx | ebx | rbx) => rbx
-      | (spl | sp | esp | rsp) => rsp
-      | (bpl | bp | ebp | rbp) => rbp
-      | (sil | si | esi | rsi) => rsi
-      | (dil | di | edi | rdi) => rdi
-      | (r8b | r8w | r8d | r8) => r8
-      | (r9b | r9w | r9d | r9) => r9
-      | (r10b | r10w | r10d | r10) => r10
-      | (r11b | r11w | r11d | r11) => r11
-      | (r12b | r12w | r12d | r12) => r12
-      | (r13b | r13w | r13d | r13) => r13
-      | (r14b | r14w | r14d | r14) => r14
-      | (r15b | r15w | r15d | r15) => r15
-      end)
-  | VectorReg vr => VectorReg (widest_vreg_of vr)  (* VREGs are already at widest *)
+  | SReg sr => SReg (widest_sreg_of sr)
+  | VReg vr => VReg (widest_vreg_of vr)
   end.
 
-  
-Definition widest_registers := Eval lazy in List.filter (fun x => REG_beq x (widest_register_of x)) (list_all REG).
+(* Machine state stores all SREGs and all LANE values (each is 64-bit) *)
+Definition widest_registers := Eval lazy in (
+  (List.map widest_register_of (list_all REG))
+).
 
 Definition max_register_bits := Eval lazy in (List.fold_right N.max 0%N (List.map reg_size (list_all REG))). (* size of the largest register *)
 
@@ -446,7 +505,7 @@ Definition widest_register_of_index_opt (n : N) : option REG
 
 (** convenience printing function *)
 Definition widest_register_of_index (n : N) : REG
-  := Option.value (widest_register_of_index_opt n) (ScalarReg rax).
+  := Option.value (widest_register_of_index_opt n) (SReg rax).
 
 Definition widest_reg_size_of (r : REG) : N :=
   reg_size (widest_register_of_index (reg_index r)).
@@ -456,10 +515,10 @@ Definition index_and_shift_and_bitcount_of_reg (r : REG) :=
 
 Definition overlapping_registers (r : REG) : list REG :=
   match r with
-  | ScalarReg sr => 
-      List.filter (fun r' => REG_beq (widest_register_of r) (widest_register_of r')) 
-                  (List.map ScalarReg (list_all SCALAR_REG))
-  | VectorReg vr => []
+  | SReg sr =>
+      List.filter (fun r' => REG_beq (widest_register_of r) (widest_register_of r'))
+                  (List.map SReg (list_all SREG))
+  | VReg vr => [VReg vr]
   end.
 
 Definition reg_of_index_and_shift_and_bitcount_opt :=

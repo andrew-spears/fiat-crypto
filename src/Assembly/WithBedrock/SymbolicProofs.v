@@ -94,7 +94,7 @@ Local Notation eval := (Symbolic.eval G d).
 Check eval. (* evaluates whether expression i equals value v in the context of G and d *)
 
 Definition R_reg (x : option idx) (v : Z) : Prop :=
-  (forall i, x = Some i -> eval i v) /\ (v = Z.land v (Z.ones 64)).
+  (forall i, x = Some i -> eval i v) /\ (v = Z.land v (Z.ones (Z.of_N max_register_bits))). (* forall expressions i, if i equals x, then actually evaluating i returns v ... AND v is max 64 bits wide *)
 Definition R_regs : Symbolic.reg_state -> Semantics.reg_state -> Prop :=
   Tuple.fieldwise R_reg.
 
@@ -352,9 +352,6 @@ Qed.
 Lemma bind_assoc {A B C} (v:M A) (k1:A->M B) (k2:B->M C) s
  : (y <- (x <- v; k1 x); k2 y)%x86symex s = (x<-v; y<-k1 x; k2 y)%x86symex s.
 Proof using Type. cbv; destruct v; trivial. Qed.
-Print Tuple.tuple.
-Print Tuple.tuple'.
-Print Tuple.fieldwise'.
 
 (* workaround: using cbn instead of this lemma makes Qed hang after next rewrite in same hyp *)
 Lemma unfold_bind {A B} ma amb s :
@@ -490,7 +487,7 @@ Lemma GetReg_R {opts : symbolic_options_computed_opt} {descr:description} s m (H
   (H : GetReg r s = Success (i, s'))
   : R s' m  /\ s :< s' /\ eval s' i (get_reg m r).
 Proof using Type.
-  cbv [GetReg GetReg64 bind some_or get_reg index_and_shift_and_bitcount_of_reg] in *.
+  cbv [GetReg GetRegFull bind some_or get_reg index_and_shift_and_bitcount_of_reg] in *.
   pose proof (get_reg_R s _ ltac:(eassumption) (reg_index r)) as Hr.
   destruct Symbolic.get_reg in *; [|inversion H]; cbn in H.
   specialize (Hr _ eq_refl); case Hr as (v&Hi0&Hv).
@@ -781,12 +778,12 @@ Lemma R_SetOperand {opts : symbolic_options_computed_opt} {descr:description} s 
   v (Hv : eval s i v)
   : exists m', SetOperand sa sz m a v = Some m' /\ R s' m' /\ s :< s'.
 Proof using Type.
+(* destruct a in *. cbn in H. casework on SetReg - 64 bits or <64 bits *)
   destruct a in *; cbn in H; cbv [err] in *; inversion_ErrorT; [ | ];
-    cbv [SetOperand Crypto.Util.Option.bind SetReg64 update_reg_with Symbolic.update_reg_with] in *;
+    cbv [SetOperand Crypto.Util.Option.bind SetRegFull update_reg_with Symbolic.update_reg_with] in *;
     repeat (BreakMatch.break_innermost_match_hyps; Prod.inversion_prod; ErrorT.inversion_ErrorT; subst).
-
   (* register is 64 bits *)  
-  { repeat step_symex.
+  (* { repeat step_symex.
   (* s is a DAG of operations, G is a table of variable values. 'eval_node G s (op [inp1, inp2...]) ?v' is a prop saying that doing operation in state s with table G returns some value v *)
     { repeat (eauto||econstructor). }
     (* exists a machine state m' that  *)
@@ -800,6 +797,9 @@ Proof using Type.
       try solve [rewrite ?Crypto.Util.ListUtil.length_set_nth, ?Crypto.Util.ListUtil.length_update_nth, ?Tuple.length_to_list; trivial].
     eapply Crypto.Util.ListUtil.Forall2_update_nth.
     { eapply Tuple.fieldwise_to_list_iff; eassumption. }
+    cbv [R_reg].
+    cbv [bitmask_of_reg].
+    (* cbv R_reg. *)
     cbv [R_reg bitmask_of_reg index_and_shift_and_bitcount_of_reg].
     intros. DestructHead.destruct_head'_and.
     eapply Ndec.Neqb_complete in Heqb; rewrite Heqb.
@@ -808,17 +808,20 @@ Proof using Type.
       - destruct sr; try (cbv [reg_size] in Heqb; discriminate Heqb); cbv; reflexivity.
       - destruct vr; try (cbv [reg_size] in Heqb; discriminate Heqb); cbv; reflexivity.
       }
-    assert (Hx64: Z.ldiff v2 (Z.ones 64) = 0). {
-      rewrite Z.land_ones in * by Lia.lia.
+    assert (HxWidest: Z.ldiff v2 (Z.ones (Z.of_N (widest_reg_size_of r))) = 0). {
+      admit. 
+      (* rewrite Z.land_ones in * by Lia.lia.
       rewrite Z.ldiff_ones_r, Z.shiftl_eq_0_iff, Z.shiftr_div_pow2 by (clear; Lia.lia).
-      clear -H6. cbn in *; zify; Z.div_mod_to_equations; lia. }
-    rewrite Z.shiftl_0_r, Z.shiftl_0_r. setoid_rewrite Hx64. setoid_rewrite Z.lor_0_r.
+      clear -H6.  *)
+      (* cbn in *; zify; Z.div_mod_to_equations; lia.  *)
+      }
+    rewrite Z.shiftl_0_r, Z.shiftl_0_r. setoid_rewrite HxWidest. setoid_rewrite Z.lor_0_r.
     intuition idtac; try Option.inversion_option; subst; trivial.
-    { cbn -[Z.ones]; rewrite !Z.land_ones, Zmod_mod by (clear;lia); trivial. } }
+    { cbn -[Z.ones]. rewrite !Z.land_ones. } *)
   (* register less than 64 bits  *)
   { eexists; split; [exact eq_refl|].
     repeat (step_symex; []).
-    cbv [GetReg64 some_or] in *.
+    cbv [GetRegFull some_or] in *.
     pose proof (get_reg_R s _ ltac:(eassumption) (reg_index r)) as Hr.
     destruct (Symbolic.get_reg _ _) in *; cbn [ErrorT.bind] in H;
       ErrorT.inversion_ErrorT; Prod.inversion_prod; subst;cbn [fst snd] in *.
@@ -836,14 +839,14 @@ Proof using Type.
     cbv [R_reg]. intuition idtac. try Option.inversion_option. subst. eval_same_expr_goal.
     { rewrite <-Tuple.nth_default_to_list. cbv [nth_default]; rewrite H5. trivial. }
     (* use 64 bit maximum *)
-    assert (Z.of_N (reg_size r) + Z.of_N (reg_offset r) <= 64).
+    assert (Z.of_N (reg_size r) + Z.of_N (reg_offset r) <= Z.of_N max_register_bits).
     1: { destruct r as [sr | vr].
     - destruct sr; clear; cbv; discriminate.
     - destruct vr; clear; cbv; discriminate.
     }
     eapply Z.bits_inj_iff'; intros j Hj.
     rewrite Z.land_spec, Z.testbit_ones_nonneg by (clear -Hj; lia).
-    destr.destr (j <? 64); rewrite ?Bool.andb_true_r, ?Bool.andb_false_r; trivial; [].
+    destr.destr (j <? (Z.of_N max_register_bits)); rewrite ?Bool.andb_true_r, ?Bool.andb_false_r; trivial; [].
     rewrite Z.lor_spec, Z.ldiff_spec, !Z.shiftl_spec, Z.land_spec, !Z.testbit_ones_nonneg by (assumption||lia).
     destr.destr (j - Z.of_N (reg_offset r) <? Z.of_N (reg_size r)); try (revert dependent j; clear -H6; lia).
     rewrite Bool.andb_true_r, Bool.andb_false_r, Bool.orb_false_l.
@@ -918,7 +921,7 @@ Ltac destr_expr_beq :=
   end.
 
 Lemma standalone_operand_size_cases o n : standalone_operand_size o = Some n ->
-  (n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N.
+  (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N.
 Proof using Type.
    destruct o; cbn; try congruence.
    { destruct r as [sr | vr].
@@ -929,16 +932,18 @@ Proof using Type.
 Qed.
 
 Lemma opcode_size_cases o n : opcode_size o = Some n ->
-  ((o = clc /\ n = 1) \/ n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N.
+  ((o = clc /\ n = 1) \/ n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N.
+  (* ((o = clc /\ n = 1) \/ n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N. *)
 Proof using Type.
-  destruct o; cbn; intros; Option.inversion_option; try now subst; eauto.
+  (* destruct o; cbn; intros; Option.inversion_option. try now subst. *)
+  destruct o; cbn; intros; Option.inversion_option; repeat (eauto; right).
 Qed.
 
 Lemma lift_map_standalone_operand_size_cases_Forall args ls
       (H : Crypto.Util.OptionList.Option.List.lift
              (map standalone_operand_size args) =
              Some ls)
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
   : Forall P ls.
 Proof using Type.
   revert ls H; induction args as [|x xs IH]; intros; cbn in *; cbv [Crypto.Util.Option.bind] in *; break_match_hyps; repeat Option.inversion_option; subst; try now constructor.
@@ -951,7 +956,7 @@ Lemma lift_map_standalone_operand_size_cases_fold_right args x xs f init
       (H : Crypto.Util.OptionList.Option.List.lift
              (map standalone_operand_size args) =
              Some (x :: xs))
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
       (Hf : forall a b, P a -> (b = init \/ P b) -> P (f a b))
       (n := fold_right f init (x :: xs))
   : P n.
@@ -967,7 +972,7 @@ Lemma map_id_map_standalone_operand_size_cases_Forall args ls
       (H : Crypto.Util.OptionList.Option.List.map id
              (map standalone_operand_size args) =
              ls)
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
   : Forall P ls.
 Proof using Type.
   subst.
@@ -980,7 +985,7 @@ Lemma map_id_map_standalone_operand_size_cases_fold_right args x xs f init
       (H : Crypto.Util.OptionList.Option.List.map id
              (map standalone_operand_size args) =
              x :: xs)
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
       (Hf : forall a b, P a -> (b = init \/ P b) -> P (f a b))
       (n := fold_right f init (x :: xs))
   : P n.
@@ -993,7 +998,7 @@ Proof using Type.
 Qed.
 
 Lemma operation_size_cases i n : Syntax.operation_size i = Some n ->
-  (((exists prefix ls, i = Build_NormalInstruction prefix Syntax.clc ls) /\ n = 1) \/ (n = 8 \/ n = 16 \/ n = 32 \/ n = 64))%N.
+  (((exists prefix ls, i = Build_NormalInstruction prefix Syntax.clc ls) /\ n = 1) \/ (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256))%N.
 Proof using Type.
   clear G.
   intuition idtac; DestructHead.destruct_head'_ex; subst; cbn in *.
