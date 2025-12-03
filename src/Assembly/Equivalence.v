@@ -1431,6 +1431,39 @@ Section check_equivalence.
           {assembly_argument_registers_left_to_right : assembly_argument_registers_left_to_right_opt}
           {assembly_callee_saved_registers' : assembly_callee_saved_registers_opt}.
 
+  
+  Definition strip_ret (asm : Lines) :=
+    let isinstr := fun l => match l.(rawline) with INSTR _ => true | _ => false end in
+    let notret := fun l => match l.(rawline) with
+                            | INSTR {| Syntax.op := Syntax.ret ; Syntax.args := nil |} => false
+                            | _ => true
+                            end in
+    match dropWhile notret asm with
+    | nil => Error Missing_ret
+    | cons _r trailer =>
+        if List.existsb isinstr trailer then Error (Code_after_ret (List.filter isinstr trailer) trailer)
+        else Success (takeWhile notret asm)
+    end.
+
+  
+  Local Notation map_err_None v := (ErrorT.map_error (fun e => (None, e)) v).
+  Local Notation map_err_Some label v := (ErrorT.map_error (fun e => (Some label, e)) v).
+  Print assembly_calling_registers.
+
+  Definition map_symex_asm (asm : list (string (* fname *) * Lines)) (inputs : list (idx + list idx)) (output_types : type_spec) (d : dag)
+    : ErrorT
+        (option (string (* fname *) * Lines (* asm lines *)) * EquivalenceCheckingError)
+        (list ((string (* fname *) * Lines (* asm lines *)) * (list (idx + list idx) * symbolic_state))) :=
+    let reg_available := assembly_calling_registers (* registers available for calling conventions *) in
+    (ls <-- (List.map
+             (fun '((fname, asm) as label)
+              => (asm <- map_err_Some label (strip_ret asm);
+                  let stack_size : nat := N.to_nat (assembly_stack_size asm) in
+                  symevaled_asm <- map_err_Some label (symex_asm_func (dereference_output_scalars:=false) d assembly_callee_saved_registers output_types stack_size inputs reg_available asm);
+                  Success (label, symevaled_asm)))
+             asm);
+    Success ls)%error.
+
   Section with_expr.
     Context {t}
             (asm : list (string (* fname *) * Lines))
@@ -1438,36 +1471,7 @@ Section check_equivalence.
             (arg_bounds : type.for_each_lhs_of_arrow ZRange.type.option.interp t)
             (out_bounds : ZRange.type.base.option.interp (type.final_codomain t)).
 
-    Definition strip_ret (asm : Lines) :=
-      let isinstr := fun l => match l.(rawline) with INSTR _ => true | _ => false end in
-      let notret := fun l => match l.(rawline) with
-                             | INSTR {| Syntax.op := Syntax.ret ; Syntax.args := nil |} => false
-                             | _ => true
-                             end in
-      match dropWhile notret asm with
-      | nil => Error Missing_ret
-      | cons _r trailer =>
-          if List.existsb isinstr trailer then Error (Code_after_ret (List.filter isinstr trailer) trailer)
-          else Success (takeWhile notret asm)
-      end.
-
-    Local Notation map_err_None v := (ErrorT.map_error (fun e => (None, e)) v).
-    Local Notation map_err_Some label v := (ErrorT.map_error (fun e => (Some label, e)) v).
-    Print assembly_calling_registers.
-    Definition map_symex_asm (inputs : list (idx + list idx)) (output_types : type_spec) (d : dag)
-      : ErrorT
-          (option (string (* fname *) * Lines (* asm lines *)) * EquivalenceCheckingError)
-          (list ((string (* fname *) * Lines (* asm lines *)) * (list (idx + list idx) * symbolic_state))) :=
-      let reg_available := assembly_calling_registers (* registers available for calling conventions *) in
-      (ls <-- (List.map
-               (fun '((fname, asm) as label)
-                => (asm <- map_err_Some label (strip_ret asm);
-                    let stack_size : nat := N.to_nat (assembly_stack_size asm) in
-                    symevaled_asm <- map_err_Some label (symex_asm_func (dereference_output_scalars:=false) d assembly_callee_saved_registers output_types stack_size inputs reg_available asm);
-                    Success (label, symevaled_asm)))
-               asm);
-      Success ls)%error.
-
+    Check map_err_None (simplify_input_type t arg_bounds).
     Definition check_equivalence : ErrorT (option (string (* fname *) * Lines (* asm lines *)) * EquivalenceCheckingError) unit :=
       let d := dag.empty in
       input_types <- map_err_None (simplify_input_type t arg_bounds);
@@ -1481,12 +1485,12 @@ Section check_equivalence.
 
           let first_new_idx_after_all_old_idxs : option idx := Some (dag.size d) in
 
-          asm_output <- map_symex_asm inputs output_types d;
+          asm_output <- map_symex_asm asm inputs output_types d;
 
           let ls := List.map (fun '(lbl, (asm_output, s)) => (lbl, asm_output, PHOAS_output, s, first_new_idx_after_all_old_idxs)) asm_output in
           Success ls
         ) else ( (* debug version, do asm first *)
-          asm_output <- map_symex_asm inputs output_types d;
+          asm_output <- map_symex_asm asm inputs output_types d;
 
           ls <-- (List.map (fun '(lbl, (asm_output, s)) =>
               let d := s.(dag_state) in
@@ -1517,4 +1521,52 @@ Section check_equivalence.
          | Error err => Error err
          end.
   End with_expr.
+(* 
+  Section with_asm2.
+    Context {t}
+            (asm1 : list (string (* fname *) * Lines))
+            (asm2 : list (string (* fname *) * Lines))
+            (arg_bounds : type.for_each_lhs_of_arrow ZRange.type.option.interp t)
+            (out_bounds : ZRange.type.base.option.interp (type.final_codomain t)).
+
+    Print EquivalenceCheckingError.
+    Definition check_asm_equivalence : ErrorT (option (string (* fname *) * Lines (* asm lines *)) * EquivalenceCheckingError) unit :=
+      let d := dag.empty in
+      input_types <- map_err_None (simplify_input_type t arg_bounds);
+      output_types <- map_err_None (simplify_base_type (type.final_codomain t) out_bounds);
+      let '(inputs, d) := build_inputs (descr:=Build_description "build_inputs" true) input_types d in
+
+      (* Execute first asm program *)
+      asm1_output <- map_symex_asm asm1 inputs output_types d;
+
+      (* For each result from asm1, execute asm2 on the resulting DAG *)
+      ls <-- (List.map (fun '(lbl1, (asm1_output, s1)) =>
+          let d := s1.(dag_state) in  (* DAG after asm1 execution *)
+          let first_new_idx_after_all_old_idxs : option idx := Some (dag.size d) in
+
+          (* Execute asm2 on the DAG from asm1 *)
+          asm2_results <- map_symex_asm asm2 inputs output_types d;
+          
+          (* Extract the single result from asm2 *)
+          match asm2_results with
+          | [(lbl2, (asm2_output, s2))] =>
+              let d := s2.(dag_state) in
+              let s := {| dag_state := d; 
+                          symbolic_reg_state := s1.(symbolic_reg_state); 
+                          symbolic_flag_state := s1.(symbolic_flag_state); 
+                          symbolic_mem_state := s1.(symbolic_mem_state) |} in
+              Success (lbl1, asm1_output, asm2_output, s, first_new_idx_after_all_old_idxs)
+          | _ => Error (None, Internal_error )
+          end)
+        asm1_output);
+
+      _ <-- List.map (fun '(lbl, asm1_output, asm2_output, s, first_new_idx_after_all_old_idxs) =>
+              if list_beq _ (sum_beq _ _ N.eqb (list_beq _ N.eqb)) asm1_output asm2_output
+              then Success tt
+              else Error (Some lbl, Unable_to_unify asm1_output asm2_output first_new_idx_after_all_old_idxs s))
+            ls;
+      Success tt.
+
+
+  End with_asm2. *)
 End check_equivalence.

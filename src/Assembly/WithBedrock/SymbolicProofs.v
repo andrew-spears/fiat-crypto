@@ -921,21 +921,19 @@ Ltac destr_expr_beq :=
   end.
 
 Lemma standalone_operand_size_cases o n : standalone_operand_size o = Some n ->
-  (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N.
+  (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 128 \/ n = 256)%N.
 Proof using Type.
    destruct o; cbn; try congruence.
    { destruct r as [sr | vr].
     - destruct sr; cbn; inversion 1; subst; eauto.
-    - destruct vr; cbn; inversion 1; subst; eauto. 
+    - destruct vr; cbn; inversion 1; subst; repeat (eauto || right).
   }
    { destruct (mem_bits_access_size _) as [ [] | ]; inversion 1; subst; eauto. }
 Qed.
 
 Lemma opcode_size_cases o n : opcode_size o = Some n ->
-  ((o = clc /\ n = 1) \/ n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N.
-  (* ((o = clc /\ n = 1) \/ n = 8 \/ n = 16 \/ n = 32 \/ n = 64)%N. *)
+  ((o = clc /\ n = 1) \/ n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 128 \/ n = 256)%N.
 Proof using Type.
-  (* destruct o; cbn; intros; Option.inversion_option. try now subst. *)
   destruct o; cbn; intros; Option.inversion_option; repeat (eauto; right).
 Qed.
 
@@ -943,7 +941,7 @@ Lemma lift_map_standalone_operand_size_cases_Forall args ls
       (H : Crypto.Util.OptionList.Option.List.lift
              (map standalone_operand_size args) =
              Some ls)
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 128 \/ n = 256)%N)
   : Forall P ls.
 Proof using Type.
   revert ls H; induction args as [|x xs IH]; intros; cbn in *; cbv [Crypto.Util.Option.bind] in *; break_match_hyps; repeat Option.inversion_option; subst; try now constructor.
@@ -956,7 +954,7 @@ Lemma lift_map_standalone_operand_size_cases_fold_right args x xs f init
       (H : Crypto.Util.OptionList.Option.List.lift
              (map standalone_operand_size args) =
              Some (x :: xs))
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 128 \/ n = 256)%N)
       (Hf : forall a b, P a -> (b = init \/ P b) -> P (f a b))
       (n := fold_right f init (x :: xs))
   : P n.
@@ -972,7 +970,7 @@ Lemma map_id_map_standalone_operand_size_cases_Forall args ls
       (H : Crypto.Util.OptionList.Option.List.map id
              (map standalone_operand_size args) =
              ls)
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 128 \/ n = 256)%N)
   : Forall P ls.
 Proof using Type.
   subst.
@@ -985,7 +983,7 @@ Lemma map_id_map_standalone_operand_size_cases_fold_right args x xs f init
       (H : Crypto.Util.OptionList.Option.List.map id
              (map standalone_operand_size args) =
              x :: xs)
-      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256)%N)
+      (P := fun n => (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 128 \/ n = 256)%N)
       (Hf : forall a b, P a -> (b = init \/ P b) -> P (f a b))
       (n := fold_right f init (x :: xs))
   : P n.
@@ -998,7 +996,7 @@ Proof using Type.
 Qed.
 
 Lemma operation_size_cases i n : Syntax.operation_size i = Some n ->
-  (((exists prefix ls, i = Build_NormalInstruction prefix Syntax.clc ls) /\ n = 1) \/ (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 256))%N.
+  (((exists prefix ls, i = Build_NormalInstruction prefix Syntax.clc ls) /\ n = 1) \/ (n = 8 \/ n = 16 \/ n = 32 \/ n = 64 \/ n = 128 \/ n = 256))%N.
 Proof using Type.
   clear G.
   intuition idtac; DestructHead.destruct_head'_ex; subst; cbn in *.
@@ -1015,7 +1013,8 @@ Proof using Type.
                       | [ H : Syntax.op ?i = _ |- _ ] => is_var i; destruct i; cbn in H
                       | [ H : opcode_size _ = Some _ |- _ ] => apply opcode_size_cases in H
                       | [ |- (_ /\ _) \/ _ ] => right
-                      end ].
+                      end ];
+  repeat (eauto || right).
 Qed.
 
 Ltac pose_operation_size_cases :=

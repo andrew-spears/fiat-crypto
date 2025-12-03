@@ -31,9 +31,12 @@ Definition SREG_dec_bl : forall x y, SREG_beq x y = true -> x = y := eqb_of_list
 Definition SREG_dec_lb : forall x y, x = y -> SREG_beq x y = true := eqb_of_listable_lb.
 Definition SREG_eq_dec : forall x y : SREG, {x = y} + {x <> y} := eq_dec_of_listable.
 
-(* YMM registers: 256-bit AVX registers *)
-(* ymm0-ymm15 are the actual AVX registers, each containing 4 x 64-bit lanes *)
+(* Vector registers: XMM (128-bit) and YMM (256-bit) AVX registers *)
+(* XMM registers alias with YMM: xmm0 is the lower 128 bits of ymm0 *)
+(* Following x86 AVX convention: writing to XMM zeroes upper 128 bits of YMM *)
 Inductive VREG :=
+| xmm0 | xmm1 | xmm2 | xmm3 | xmm4 | xmm5 | xmm6 | xmm7
+| xmm8 | xmm9 | xmm10 | xmm11 | xmm12 | xmm13 | xmm14 | xmm15
 | ymm0 | ymm1 | ymm2 | ymm3 | ymm4 | ymm5 | ymm6 | ymm7
 | ymm8 | ymm9 | ymm10 | ymm11 | ymm12 | ymm13 | ymm14 | ymm15
 .
@@ -46,33 +49,6 @@ Definition VREG_dec_bl : forall x y, VREG_beq x y = true -> x = y := eqb_of_list
 Definition VREG_dec_lb : forall x y, x = y -> VREG_beq x y = true := eqb_of_listable_lb.
 Definition VREG_eq_dec : forall x y : VREG, {x = y} + {x <> y} := eq_dec_of_listable.
 
-(* Lane references: specific 64-bit lanes within YMM registers *)
-Inductive LANE :=
-| ymm0_lane0 | ymm0_lane1 | ymm0_lane2 | ymm0_lane3
-| ymm1_lane0 | ymm1_lane1 | ymm1_lane2 | ymm1_lane3
-| ymm2_lane0 | ymm2_lane1 | ymm2_lane2 | ymm2_lane3
-| ymm3_lane0 | ymm3_lane1 | ymm3_lane2 | ymm3_lane3
-| ymm4_lane0 | ymm4_lane1 | ymm4_lane2 | ymm4_lane3
-| ymm5_lane0 | ymm5_lane1 | ymm5_lane2 | ymm5_lane3
-| ymm6_lane0 | ymm6_lane1 | ymm6_lane2 | ymm6_lane3
-| ymm7_lane0 | ymm7_lane1 | ymm7_lane2 | ymm7_lane3
-| ymm8_lane0 | ymm8_lane1 | ymm8_lane2 | ymm8_lane3
-| ymm9_lane0 | ymm9_lane1 | ymm9_lane2 | ymm9_lane3
-| ymm10_lane0 | ymm10_lane1 | ymm10_lane2 | ymm10_lane3
-| ymm11_lane0 | ymm11_lane1 | ymm11_lane2 | ymm11_lane3
-| ymm12_lane0 | ymm12_lane1 | ymm12_lane2 | ymm12_lane3
-| ymm13_lane0 | ymm13_lane1 | ymm13_lane2 | ymm13_lane3
-| ymm14_lane0 | ymm14_lane1 | ymm14_lane2 | ymm14_lane3
-| ymm15_lane0 | ymm15_lane1 | ymm15_lane2 | ymm15_lane3
-.
-
-Derive LANE_Listable SuchThat (@FinitelyListable LANE LANE_Listable) As LANE_FinitelyListable.
-Proof. prove_ListableDerive. Qed.
-Global Existing Instances LANE_Listable LANE_FinitelyListable.
-Definition LANE_beq : LANE -> LANE -> bool := eqb_of_listable.
-Definition LANE_dec_bl : forall x y, LANE_beq x y = true -> x = y := eqb_of_listable_bl.
-Definition LANE_dec_lb : forall x y, x = y -> LANE_beq x y = true := eqb_of_listable_lb.
-Definition LANE_eq_dec : forall x y : LANE, {x = y} + {x <> y} := eq_dec_of_listable.
 
 (* Unified register type: scalar or vector *)
 Inductive REG :=
@@ -89,28 +65,6 @@ Definition REG_beq : REG -> REG -> bool := eqb_of_listable.
 Definition REG_dec_bl : forall x y, REG_beq x y = true -> x = y := eqb_of_listable_bl.
 Definition REG_dec_lb : forall x y, x = y -> REG_beq x y = true := eqb_of_listable_lb.
 Definition REG_eq_dec : forall x y : REG, {x = y} + {x <> y} := eq_dec_of_listable.
-
-
-(* Helper: get the 4 lanes of a VREG *)
-Definition vreg_lanes (vr : VREG) : list LANE :=
-  match vr with
-  | ymm0 => [ymm0_lane0; ymm0_lane1; ymm0_lane2; ymm0_lane3]
-  | ymm1 => [ymm1_lane0; ymm1_lane1; ymm1_lane2; ymm1_lane3]
-  | ymm2 => [ymm2_lane0; ymm2_lane1; ymm2_lane2; ymm2_lane3]
-  | ymm3 => [ymm3_lane0; ymm3_lane1; ymm3_lane2; ymm3_lane3]
-  | ymm4 => [ymm4_lane0; ymm4_lane1; ymm4_lane2; ymm4_lane3]
-  | ymm5 => [ymm5_lane0; ymm5_lane1; ymm5_lane2; ymm5_lane3]
-  | ymm6 => [ymm6_lane0; ymm6_lane1; ymm6_lane2; ymm6_lane3]
-  | ymm7 => [ymm7_lane0; ymm7_lane1; ymm7_lane2; ymm7_lane3]
-  | ymm8 => [ymm8_lane0; ymm8_lane1; ymm8_lane2; ymm8_lane3]
-  | ymm9 => [ymm9_lane0; ymm9_lane1; ymm9_lane2; ymm9_lane3]
-  | ymm10 => [ymm10_lane0; ymm10_lane1; ymm10_lane2; ymm10_lane3]
-  | ymm11 => [ymm11_lane0; ymm11_lane1; ymm11_lane2; ymm11_lane3]
-  | ymm12 => [ymm12_lane0; ymm12_lane1; ymm12_lane2; ymm12_lane3]
-  | ymm13 => [ymm13_lane0; ymm13_lane1; ymm13_lane2; ymm13_lane3]
-  | ymm14 => [ymm14_lane0; ymm14_lane1; ymm14_lane2; ymm14_lane3]
-  | ymm15 => [ymm15_lane0; ymm15_lane1; ymm15_lane2; ymm15_lane3]
-  end.
 
 
 Definition CONST := Z.
@@ -253,7 +207,9 @@ Inductive OpCode :=
 | xchg
 | xor
 (* Vectorized opcodes *)
-(* | vadd *)
+| vaddps
+| vpaddq    (* Vector packed add quadword integers *)
+| vmovq     (* Vector move quadword *)
 .
 
 Derive OpCode_Listable SuchThat (@FinitelyListable OpCode OpCode_Listable) As OpCode_FinitelyListable.
@@ -343,7 +299,9 @@ Definition accesssize_of_declaration (opc : OpCode) : option AccessSize :=
   | test
   | xchg
   | xor
-  (* | vadd *)
+  | vaddps
+  | vpaddq
+  | vmovq
     => None
   end.
 
@@ -385,9 +343,15 @@ Definition sreg_size (sr : SREG) : N :=
   => 8
   end.
 
-Definition vreg_size (vr : VREG) : N := 256. (* ymm all 256 bits *)
-
-Definition lane_size (l : LANE) : N := 64. (* assuming 4 64-bits lanes per ymm reg *)
+Definition vreg_size (vr : VREG) : N :=
+  match vr with
+  | xmm0 | xmm1 | xmm2 | xmm3 | xmm4 | xmm5 | xmm6 | xmm7
+  | xmm8 | xmm9 | xmm10 | xmm11 | xmm12 | xmm13 | xmm14 | xmm15
+    => 128
+  | ymm0 | ymm1 | ymm2 | ymm3 | ymm4 | ymm5 | ymm6 | ymm7
+  | ymm8 | ymm9 | ymm10 | ymm11 | ymm12 | ymm13 | ymm14 | ymm15
+    => 256
+  end.
 
 Definition reg_size (r : REG) : N :=
   match r with
@@ -470,7 +434,17 @@ Definition widest_sreg_of (sr : SREG) : SREG :=
     | (r14b | r14w | r14d | r14) => r14
     | (r15b | r15w | r15d | r15) => r15
   end.
-Definition widest_vreg_of (vr : VREG) : VREG := vr. (* All VREGs are already at widest *)
+Definition widest_vreg_of (vr : VREG) : VREG :=
+  match vr with
+  | xmm0 => ymm0 | xmm1 => ymm1 | xmm2 => ymm2 | xmm3 => ymm3
+  | xmm4 => ymm4 | xmm5 => ymm5 | xmm6 => ymm6 | xmm7 => ymm7
+  | xmm8 => ymm8 | xmm9 => ymm9 | xmm10 => ymm10 | xmm11 => ymm11
+  | xmm12 => ymm12 | xmm13 => ymm13 | xmm14 => ymm14 | xmm15 => ymm15
+  | ymm0 => ymm0 | ymm1 => ymm1 | ymm2 => ymm2 | ymm3 => ymm3
+  | ymm4 => ymm4 | ymm5 => ymm5 | ymm6 => ymm6 | ymm7 => ymm7
+  | ymm8 => ymm8 | ymm9 => ymm9 | ymm10 => ymm10 | ymm11 => ymm11
+  | ymm12 => ymm12 | ymm13 => ymm13 | ymm14 => ymm14 | ymm15 => ymm15
+  end.
 
 Definition widest_register_of (r : REG) : REG :=
   match r with
@@ -518,7 +492,9 @@ Definition overlapping_registers (r : REG) : list REG :=
   | SReg sr =>
       List.filter (fun r' => REG_beq (widest_register_of r) (widest_register_of r'))
                   (List.map SReg (list_all SREG))
-  | VReg vr => [VReg vr]
+  | VReg vr =>
+      List.filter (fun r' => REG_beq (widest_register_of r) (widest_register_of r'))
+                  (List.map VReg (list_all VREG))
   end.
 
 Definition reg_of_index_and_shift_and_bitcount_opt :=
