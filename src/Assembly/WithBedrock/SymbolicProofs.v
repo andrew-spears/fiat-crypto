@@ -301,6 +301,11 @@ Local Infix ":<" := subsumed (at level 70, no associativity).
 Local Existing Instance Naive.word64_ok.
 Local Existing Instance SortedListWord.ok.
 
+Lemma subsumed_trans s1 s2 s3 (H12 : s1 :< s2) (H23 : s2 :< s3) : s1 :< s3.
+Proof using Type.
+  intros. specialize (H12 i v). apply H12 in H. specialize (H23 i v). apply H23 in H. exact H.
+Qed.
+
 Lemma R_mem_Permutation d s1 m (HR : R_mem d s1 m) s2
   (HP : Permutation s1 s2) : R_mem d s2 m.
 Proof using Type.
@@ -717,7 +722,6 @@ Proof using Type.
   setoid_rewrite (split_le_combine [b1; b2; b3; b4; b5; b6; b7]); trivial.
 Qed.
 
-
 Lemma GetOperand_R {opts : symbolic_options_computed_opt} {descr:description} s m (HR: R s m) (so:OperationSize) (sa:AddressSize) a i s'
   (H : GetOperand a s = Success (i, s'))
   : R s' m /\ s :< s' /\ exists v, eval s' i v /\ DenoteOperand sa so m a = Some v.
@@ -1096,7 +1100,10 @@ Ltac step :=
 Ltac step1 := step; (eassumption||trivial); [].
 Ltac step01 := solve [step] || step1.
 
-Lemma SetOperand_same n m a v m'
+
+(* Denote gets the value of a register, Set actually changes the machine state *)
+(* This says that setting something to its current value returns the same machine state *)
+Lemma SetOperand_same (n : N) (a : ARG) (v : Z) (m m' : machine_state) 
   (Hd : DenoteOperand 64 n m a = Some v) (Hs : SetOperand 64 n m a v = Some m')
   : m = m'.
 Proof using Type.
@@ -1137,12 +1144,14 @@ Proof using Type.
 Qed.
 
 
-Lemma SymexNornalInstruction_R {opts : symbolic_options_computed_opt} {descr:description} s m (HR : R s m) instr :
+Lemma SymexNornalInstruction_R {opts : symbolic_options_computed_opt} {descr:description} s m (HR : R s m) (instr : NormalInstruction) :
   forall _tt s', Symbolic.SymexNormalInstruction instr s = Success (_tt, s') ->
   exists m', Semantics.DenoteNormalInstruction m instr = Some m' /\ R s' m' /\ s :< s'.
 Proof using Type.
   intros [] s' H.
-  case instr as [op args]; cbv [SymexNormalInstruction OperationSize] in H.
+  case instr as [op args].
+  
+  cbv [SymexNormalInstruction OperationSize] in H.
   repeat (repeat destruct_one_match_hyp; repeat step01).
 
   all : repeat
@@ -1393,6 +1402,13 @@ Proof using Type.
   Unshelve. all : match goal with H : context[push] |- _ => idtac | H : context[pop] |- _ => idtac | _ => shelve end; shelve_unifiable.
   all: rewrite !Z.land_ones by lia; push_Zmod; pull_Zmod; f_equal; lia.
 
+  (* Unshelve. all : match goal with H : context[vpaddq] |- _ => idtac | H : context[vmovq] |- _ => idtac | _ => shelve end; shelve_unifiable.
+  {  simpl nth_default.
+    admit. } *)
+
+
+  (* Unshelve. *)
+  (* Show Existentials. *)
   Unshelve. all: shelve_unifiable.
   all: fail_if_goals_remain ().
 (* Qed here hangs until the kernel crashes. Admitting until it can be sped up *)

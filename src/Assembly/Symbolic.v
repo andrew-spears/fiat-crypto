@@ -4200,6 +4200,9 @@ Definition rcrcnt s cnt : Z :=
 
 Notation "f @ ( x , y , .. , z )" := (PreApp f (@cons pre_expr x (@cons pre_expr y .. (@cons pre_expr z nil) ..))) (at level 10) : x86symex_scope.
 
+Print App.
+
+
 Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:description} (instr : NormalInstruction) : M unit :=
   let stack_addr_size : AddressSize := 64%N in
   let sa : AddressSize := 64%N in
@@ -4211,6 +4214,11 @@ Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:
   | (mov | movzx | movabs | movdqa | movdqu | movq | movd | movups), [dst; src] => (* Note: unbundle when switching from N to Z *)
     v <- GetOperand src;
     SetOperand dst v
+  | vmovq, [dst; src] => (* this is technically innacurate - we should be zeroing upper bits, but for now this is a starting point. *)
+    (* vmovq always operates on 64 bits *)
+    v <- GetOperand (s:=64) src; (* gets the full register *)
+    v <- (App ((slice 0 64), [v]));
+    SetOperand (s:=64) dst v
   | xchg, [a; b] => (* Note: unbundle when switching from N to Z *)
     va <- GetOperand a;
     vb <- GetOperand b;
@@ -4403,7 +4411,6 @@ Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:
                SetOperand dst v
 
   | nop, [] => ret tt
-
   | _, _ => err (error.unimplemented_instruction instr)
  end
   | Some prefix => err (error.unimplemented_prefix instr) end
