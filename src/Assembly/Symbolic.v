@@ -435,7 +435,7 @@ Module Export Options.
        |}.
 End Options.
 Module Export Hints.
-  Global Existing Instance default_rewriting_passes.
+Global Existing Instance default_rewriting_passes.
   Global Existing Instances
          Build_symbolic_options_opt
          Build_symbolic_options_computed_opt
@@ -625,7 +625,7 @@ Section WithContext.
          | _ => None
          end.
 
-  
+  (* defines what each op actually does in symbolic computation *)
   Definition interp_op o (args : list Z) : option Z :=
     Eval cbv [invert_Some identity op_to_Z_binop] in
     let keep n x := Z.land x (Z.ones (Z.of_N n)) in
@@ -2605,7 +2605,8 @@ Definition addcarry_small (d : dag) :=
           then (ExprApp (const 0, nil))
           else e | _ => e end | _ =>  e end.
 #[local] Instance describe_addcarry_small : description_of Rewrite.addcarry_small
-  := "Replaces (addcarry _, args) with 0 when bounds analysis can prove there's no carry".
+  := "Replaces (addcarry _, args) with 0 when bounds analysis c
+an prove there's no carry".
 Global Instance addcarry_small_ok : Ok addcarry_small.
 Proof using Type.
   t; f_equal.
@@ -4090,19 +4091,13 @@ Definition RevealConst (i : idx) : M Z :=
   | _ => err (error.expected_const i x)
   end.
 
+(* M idx is the idx of the result of reading and slicing the register value, along with threaded symbolic state including the DAG itself *)
 Definition GetReg {opts : symbolic_options_computed_opt} {descr:description} r : M idx :=
   let '(rn, lo, sz) := index_and_shift_and_bitcount_of_reg r in
   v <- GetRegFull rn;
   App ((slice lo sz), [v]).
 Definition SetReg {opts : symbolic_options_computed_opt} {descr:description} r (v : idx) : M unit :=
   let '(rn, lo, sz) := index_and_shift_and_bitcount_of_reg r in (* sz is the size of the register, not the value *)
-  (* if N.eqb sz (widest_reg_size_of r )(* r is not aliasing *) 
-  then v <- App (slice 0 sz, [v]);
-      old <- GetRegFull rn;
-      SetRegFull rn v works even if old value is unspecified
-  else old <- GetRegFull rn;
-      v <- App ((set_slice lo sz), [old; v]);
-      SetRegFull rn v. *)
   old <- GetRegFull rn;
   v <- App ((set_slice lo sz), [old; v]);
   SetRegFull rn v.
@@ -4159,6 +4154,8 @@ Definition GetOperand {opts : symbolic_options_computed_opt} {descr:description}
   | label l => err (error.unsupported_label_argument l)
   end.
 
+(* for destination (mem, reg, label) o, set dst to the value represented by idx i *)
+(* returns the state but unit instead of idx, since the doesnt actually compute a value *) 
 Definition SetOperand {opts : symbolic_options_computed_opt} {descr:description} {s : OperationSize} {sa : AddressSize} (o : ARG) (v : idx) : M unit :=
   match o with
   | Syntax.const a => err (error.set_const a v)
@@ -4198,11 +4195,62 @@ Definition rcrcnt s cnt : Z :=
   if N.eqb s 16 then Z.land cnt 31 mod 17 else
   Z.land cnt (Z.of_N s-1).
 
+
+Module SymbolicVector.
+(* === Vector instruction helpers === *)
+(* These functions implement lane-parallel SIMD operations where the same
+   operation is applied independently to each lane (chunk) of the vector. *)
+
+(* Low-level: Build a single lane computation (slice -> op -> result) *)
+Definition make_lane {opts : symbolic_options_computed_opt} {descr : description}
+  (v1 v2 : idx) (lane_op : op) (lane_idx : nat) (lane_width : Z) : M idx :=
+  let offset := Z.of_nat lane_idx * lane_width in
+  l1 <- App (slice (Z.to_N offset) (Z.to_N lane_width), [v1]);
+  l2 <- App (slice (Z.to_N offset) (Z.to_N lane_width), [v2]);
+  App (lane_op, [l1; l2]).
+
+(* Low-level: Build list of all lane computations *)
+Definition build_lanes {opts : symbolic_options_computed_opt} {descr : description}
+  (v1 v2 : idx) (lane_op : op) (num_lanes : nat) (lane_width : Z) : list (M idx) :=
+  List.map (fun i => make_lane v1 v2 lane_op i lane_width) (seq 0 num_lanes).
+
+(* Low-level: Combine lanes by threading accumulator through set_slice operations *)
+Fixpoint combine_lanes_aux {opts : symbolic_options_computed_opt} {descr : description}
+  (lanes : list (M idx)) (lane_width : Z) (lane_idx : N) (acc : idx) : M idx :=
+  match lanes with
+  | [] => ret acc
+  | lane :: rest =>
+      lane_val <- lane;
+new_acc <- App (set_slice (lane_idx * Z.to_N lane_width) (Z.to_N lane_width), [acc; lane_val]);
+combine_lanes_aux rest lane_width (lane_idx + 1)%N new_acc
+end.
+
+Definition combine_lanes {opts : symbolic_options_computed_opt} {descr : description}
+  (lanes : list (M idx)) (lane_width : Z) : M idx :=
+  zero <- App (const 0, []);
+combine_lanes_aux lanes lane_width 0%N zero.
+
+(* Mid-level: Perform lane-parallel binary operation on two DAG indices *)
+Definition vector_binop_idx {opts : symbolic_options_computed_opt} {descr : description}
+  (v1 v2 : idx) (lane_op : op) (num_lanes : nat) (lane_width : Z) : M idx :=
+  let lanes := build_lanes v1 v2 lane_op num_lanes lane_width in
+  combine_lanes lanes lane_width.
+
+(* High-level: Complete lane-parallel vector instruction (GetOperand -> compute -> SetOperand) *)
+Definition SymexVectorBinOp {opts : symbolic_options_computed_opt} {descr : description}
+  {s : OperationSize} {sa : AddressSize}
+  (dst src1 src2 : ARG) (lane_op : op) (num_lanes : nat) (lane_width : Z) : M unit :=
+  v1 <- GetOperand src1;
+v2 <- GetOperand src2;
+result <- vector_binop_idx v1 v2 lane_op num_lanes lane_width;
+SetOperand dst result.
+End SymbolicVector.
+
+
+
 Notation "f @ ( x , y , .. , z )" := (PreApp f (@cons pre_expr x (@cons pre_expr y .. (@cons pre_expr z nil) ..))) (at level 10) : x86symex_scope.
 
-Print App.
-
-
+Print Z.of_nat.
 Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:description} (instr : NormalInstruction) : M unit :=
   let stack_addr_size : AddressSize := 64%N in
   let sa : AddressSize := 64%N in
@@ -4219,6 +4267,8 @@ Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:
     v <- GetOperand (s:=64) src; (* gets the full register *)
     v <- (App ((slice 0 64), [v]));
     SetOperand (s:=64) dst v
+  | vpaddq, [dst; src1; src2] => (* packed add of quadwords - no flags affected *)
+      SymbolicVector.SymexVectorBinOp dst src1 src2 (add 64) 4 64
   | xchg, [a; b] => (* Note: unbundle when switching from N to Z *)
     va <- GetOperand a;
     vb <- GetOperand b;

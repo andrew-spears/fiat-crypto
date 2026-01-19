@@ -207,8 +207,7 @@ Inductive OpCode :=
 | xchg
 | xor
 (* Vectorized opcodes *)
-(* | vaddps
-| vpaddq    Vector packed add quadword integers *)
+| vpaddq    (* Vector packed add quadword integers *)
 | vmovq     (* Vector move quadword *)
 .
 
@@ -299,8 +298,7 @@ Definition accesssize_of_declaration (opc : OpCode) : option AccessSize :=
   | test
   | xchg
   | xor
-  (* | vaddps
-  | vpaddq *)
+  | vpaddq
   | vmovq
     => None
   end.

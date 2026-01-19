@@ -4,6 +4,7 @@ Require Import Crypto.Util.ZUtil.Tactics.PullPush.
 From Coq Require Import NArith.
 From Coq Require Import ZArith.
 Require Import Crypto.Util.ZUtil.Testbit.
+Require Import Crypto.Util.ZUtil.Land.
 Require Import Crypto.AbstractInterpretation.ZRange.
 Require Import Crypto.Util.ErrorT.
 Import Coq.Lists.List. (* [map] is [List.map] not [ErrorT.map] *)
@@ -24,6 +25,7 @@ Require Import coqutil.Map.Interface. (* coercions *)
 Require Import coqutil.Word.Interface.
 Require Import coqutil.Word.LittleEndianList.
 Import Word.Naive.
+
 
 Section Memory.
   (* bedrock2/src/bedrock2/Memory.v Section WithoutTuples *)
@@ -82,7 +84,7 @@ Import coqutil.Tactics.autoforward coqutil.Decidable coqutil.Tactics.Tactics.
 Local Coercion ExprRef : idx >-> expr.
 
 Section WithFrame.
-Context (frame : mem_state -> Prop).
+Context (frame : mem_state -> Prop). (* all the untracked and probably untouched portions of memory *)
 
 Section WithCtx1.
 Context (G : symbol -> option Z).
@@ -91,10 +93,11 @@ Local Notation gensym_dag_ok := (Symbolic.gensym_dag_ok G).
 Section WithDag.
 Context (d : dag).
 Local Notation eval := (Symbolic.eval G d).
-Check eval. (* evaluates whether expression i equals value v in the context of G and d *)
+Check eval. (* eval i v evaluates whether idx x evals to value v in the context of G and d *)
 
+(* given idx i and value v, check if i evals to v *)
 Definition R_reg (x : option idx) (v : Z) : Prop :=
-  (forall i, x = Some i -> eval i v) /\ (v = Z.land v (Z.ones (Z.of_N max_register_bits))). (* forall expressions i, if i equals x, then actually evaluating i returns v ... AND v is max 64 bits wide *)
+  (forall i, x = Some i -> eval i v) /\ (v = Z.land v (Z.ones (Z.of_N max_register_bits))). 
 Definition R_regs : Symbolic.reg_state -> Semantics.reg_state -> Prop :=
   Tuple.fieldwise R_reg.
 
@@ -104,12 +107,14 @@ Definition R_flags : Symbolic.flag_state -> Semantics.flag_state -> Prop :=
   Tuple.fieldwise R_flag.
 
 Definition R_cell64 (ia iv : idx) : mem_state -> Prop :=
-  Lift1Prop.ex1 (fun a =>
-  Lift1Prop.ex1 (fun bs => sep (emp (
-      eval ia (word.unsigned a) /\
-      length bs = 8%nat /\ eval iv (le_combine bs)))
-    (eq (OfListWord.map.of_list_word_at a bs)))).
+  Lift1Prop.ex1 (fun a =>                                (* concrete address a *)
+  Lift1Prop.ex1 (fun bs => sep (emp (                    (* bytes bs *)
+      eval ia (word.unsigned a) /\                     (* ia evals to a *)
+      length bs = 8%nat /\ eval iv (le_combine bs)))     (* iv evals to bs *)
+    (eq (OfListWord.map.of_list_word_at a bs)))).     (* the mem_state has bs at address a *)
 
+(* each symbolic.mem_state entry stores two indices, address idx and value idx *)
+(* mem is related if every address actually stores that value in the concrete mem_state. *)
 Fixpoint R_mem (sm : Symbolic.mem_state) : mem_state -> Prop :=
   match sm with
   | nil => frame
@@ -488,6 +493,10 @@ Ltac step_SetFlag :=
     [eassumption|..|clear H]
   end.
 
+
+(* symbolic state s machine state m, related *)
+(* if calling GetReg on register r in state s is gives idx i and updates to state s', then *)
+(* s' is still related to m AND s is subsumed in s' AND eval i in s' gives us the original value of r in the machine state *)
 Lemma GetReg_R {opts : symbolic_options_computed_opt} {descr:description} s m (HR: R s m) r i s'
   (H : GetReg r s = Success (i, s'))
   : R s' m  /\ s :< s' /\ eval s' i (get_reg m r).
@@ -722,6 +731,9 @@ Proof using Type.
   setoid_rewrite (split_le_combine [b1; b2; b3; b4; b5; b6; b7]); trivial.
 Qed.
 
+
+(* looking up address a in state s returns value of idx i and state s' *)
+(* Then the new states correspond and eval i has value v in s' AND address a has value v in the machine state *)
 Lemma GetOperand_R {opts : symbolic_options_computed_opt} {descr:description} s m (HR: R s m) (so:OperationSize) (sa:AddressSize) a i s'
   (H : GetOperand a s = Success (i, s'))
   : R s' m /\ s :< s' /\ exists v, eval s' i v /\ DenoteOperand sa so m a = Some v.
@@ -776,6 +788,8 @@ Ltac step_GetOperand :=
     case (GetOperand_R s _ ltac:(eassumption) _ _ _ _ _ H) as (Hs'&Hl&(v&Hi&Hv)); clear H
   end.
 
+(* Setting address a to v gives state s' and i evals to v in s *)
+(* then there exists a new machine state m' corresponding to s' s.t. setting a to v in m gives m' *)
 (* note: do the two SetOperand both truncate inputs or not?... *)
 Lemma R_SetOperand {opts : symbolic_options_computed_opt} {descr:description} s m (HR : R s m)
   (sz:OperationSize) (sa:AddressSize) a i _tt s' (H : Symbolic.SetOperand a i s = Success (_tt, s'))
@@ -885,6 +899,19 @@ Ltac step_SetOperand :=
       case (R_SetOperand s _ ltac:(eassumption) _ _ _ _ _ _ H _ ltac:(eauto 99 with nocore))
         as (m&?Hm&HR&Hl); clear H
   end.
+
+
+(* helper for R_SymexNormalInstruction for instructions using Vectorbinop *)
+Lemma R_VectorBinOp {opts : symbolic_options_computed_opt} {descr:description}
+		s m s' _tt (HR : R s m)
+		(num_lanes : nat)  (lane_width : Z) (d s1 s2 : ARG) (lane_op : op) (binop : Z -> Z -> Z) (sa : AddressSize) (s_op : OperationSize)
+		(Hop : op_to_Z_binop lane_op = Some binop)  (* Precondition: op is binary *)
+		(H : SymbolicVector.SymexVectorBinOp d s1 s2 lane_op num_lanes lane_width s = Success (_tt, s')) :
+			exists m', R s' m' /\ s :< s' /\ 
+			(SemanticVector.DenoteVectorBinOp sa s_op m d s1 s2 binop num_lanes lane_width = Some m').
+	Proof using Type.
+	  destruct d in *; cbn in H. 
+		Admitted.
 
 Lemma HavocFlags_R s m (HR : R s m) :
   forall _tt s', Symbolic.HavocFlags s = Success (_tt, s') ->
@@ -1100,6 +1127,10 @@ Ltac step :=
 Ltac step1 := step; (eassumption||trivial); [].
 Ltac step01 := solve [step] || step1.
 
+Lemma shiftl_0_r_N (v : Z) : Z.shiftl v (Z.of_N 0) = v.
+Proof. rewrite Z.shiftl_0_r. reflexivity. Qed.
+Print Z.shiftl_0_r.
+
 
 (* Denote gets the value of a register, Set actually changes the machine state *)
 (* This says that setting something to its current value returns the same machine state *)
@@ -1144,6 +1175,8 @@ Proof using Type.
 Qed.
 
 
+(* Executing instruction in state s gives state s' *)
+(* exists a machine state correponding to s' s.t.  *)
 Lemma SymexNornalInstruction_R {opts : symbolic_options_computed_opt} {descr:description} s m (HR : R s m) (instr : NormalInstruction) :
   forall _tt s', Symbolic.SymexNormalInstruction instr s = Success (_tt, s') ->
   exists m', Semantics.DenoteNormalInstruction m instr = Some m' /\ R s' m' /\ s :< s'.
@@ -1402,14 +1435,9 @@ Proof using Type.
   Unshelve. all : match goal with H : context[push] |- _ => idtac | H : context[pop] |- _ => idtac | _ => shelve end; shelve_unifiable.
   all: rewrite !Z.land_ones by lia; push_Zmod; pull_Zmod; f_equal; lia.
 
-  (* Unshelve. all : match goal with H : context[vpaddq] |- _ => idtac | H : context[vmovq] |- _ => idtac | _ => shelve end; shelve_unifiable.
-  {  simpl nth_default.
-    admit. } *)
-
-
-  (* Unshelve. *)
-  (* Show Existentials. *)
   Unshelve. all: shelve_unifiable.
+	cbn. repeat rewrite Z.land_same_r. autorewrite with zsimplify push_Zshift. clear.  cbn. 
+
   all: fail_if_goals_remain ().
 (* Qed here hangs until the kernel crashes. Admitting until it can be sped up *)
 Admitted.

@@ -135,6 +135,54 @@ Definition SetOperand (sa s : N) (st : machine_state) (a : ARG) (v : Z) : option
   | label _ => None
   end.
 
+
+Module SemanticVector.
+	(* === Vector instruction helpers === *)
+	(* These functions implement lane-parallel SIMD operations where the same
+   operation is applied independently to each lane (chunk) of the vector. *)
+
+	(* Low-level: Extract the ith lane of a vector register value *)
+	Definition extract_lane (v : Z) (lane_idx : nat) (lane_width : Z) : Z :=
+		Z.land (Z.shiftr v (Z.of_nat lane_idx * lane_width)) (Z.ones lane_width).
+
+	(* Low-level: Insert a masked lane value at position i *)
+	Definition insert_lane (lane_val : Z) (lane_idx : nat) (lane_width : Z) : Z :=
+		Z.shiftl (Z.land lane_val (Z.ones lane_width)) (Z.of_nat lane_idx * lane_width).
+
+	(* Low-level: Combine lanes using OR *)
+	Fixpoint combine_lanes_at (lanes : list Z) (start_idx : nat) (lane_width : Z) : Z :=
+		match lanes with
+		| [] => 0
+		| l :: rest => Z.lor (insert_lane l start_idx lane_width)
+                   (combine_lanes_at rest (S start_idx) lane_width)
+		end.
+
+	Definition combine_lanes (lanes : list Z) (lane_width : Z) : Z :=
+		combine_lanes_at lanes 0 lane_width.
+
+	(* Low-level: Build a single lane value *)
+	Definition make_lane (v1 v2 : Z) (lane_op : Z -> Z -> Z) (lane_idx : nat) (lane_width : Z) : Z :=
+		lane_op (extract_lane v1 lane_idx lane_width) (extract_lane v2 lane_idx lane_width).
+
+	(* Low-level: Build list of lane values *)
+	Definition build_lanes (v1 v2 : Z) (lane_op : Z -> Z -> Z) (num_lanes : nat) (lane_width : Z) : list Z :=
+		List.map (fun i => make_lane v1 v2 lane_op i lane_width) (seq 0 num_lanes).
+
+	(* Mid-level: Perform lane-parallel binary operation on two values *)
+	Definition vector_binop_values (v1 v2 : Z) (lane_op : Z -> Z -> Z) (num_lanes : nat) (lane_width : Z) : Z :=
+		let lanes := build_lanes v1 v2 lane_op num_lanes lane_width in
+		combine_lanes lanes lane_width.
+
+	(* High-level: Complete lane-parallel vector instruction (DenoteOperand -> compute -> SetOperand) *)
+	Definition DenoteVectorBinOp (sa s : N) (st : machine_state) (dst src1 src2 : ARG)
+		(lane_op : Z -> Z -> Z) (num_lanes : nat) (lane_width : Z) : option machine_state :=
+		v1 <- DenoteOperand sa s st src1;
+  v2 <- DenoteOperand sa s st src2;
+  let result := vector_binop_values v1 v2 lane_op num_lanes lane_width in
+  SetOperand sa s st dst result.
+
+End SemanticVector.
+
 Definition result_flags s v :=
   (* note: AF and PF remain undefined *)
   let fs := set_flag havoc_flags ZF (Z.eqb v 0) in
@@ -156,7 +204,6 @@ Definition rcrcnt s cnt : Z :=
   if N.eqb s 8 then Z.land cnt 0x1f mod 9 else
   if N.eqb s 16 then Z.land cnt 0x1f mod 17 else
   Z.land cnt (Z.of_N s-1).
-
 
 (* NOTE: currently immediate operands are treated as if sign-extension has been
  * performed ahead of time. *)
@@ -223,6 +270,9 @@ Definition DenoteNormalInstruction (st : machine_state) (instr : NormalInstructi
     let v := Z.land v (Z.ones (Z.of_N s)) in
     st <- SetOperand sa s st dst v;
     Some (SetFlag st flag (Z.odd (Z.shiftr (v1 + v2 + c) (Z.of_N s))))
+  | vpaddq, [dst; src1; src2] => (* vector packed add quadword *)
+		let lane_add := (fun a b => Z.land (a + b) (Z.ones 64)) in
+      SemanticVector.DenoteVectorBinOp sa s st dst src1 src2 lane_add 4 64
   | (sbb | sub) as opc, [dst; src] =>
     c <- (match opc with sbb => get_flag st CF | _ => Some false end);
     let c := Z.b2z c in
@@ -391,14 +441,13 @@ Definition DenoteNormalInstruction (st : machine_state) (instr : NormalInstructi
        let rsp' := Z.land (rsp' + (Z.of_N s / 8)) (Z.ones (Z.of_N stack_addr_size)) in (* we don't actually need to truncate here, but it makes proofs a bit easier *)
        st   <- SetOperand stack_addr_size s st rsp rsp';
                SetOperand sa s st dst v
-
   | nop, [] => Some st
   | ret, _ => None (* not sure what to do with this ret, maybe exlude it? *)
-
     (* catchall for an operator with no operands *)
   | adc, _
   | adcx, _
   | add, _
+ 	| vpaddq, _
   | adox, _
   | and, _
   | bzhi, _
