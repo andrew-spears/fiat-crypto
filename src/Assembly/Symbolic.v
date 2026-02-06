@@ -92,7 +92,7 @@ Global Instance Show_OperationSize : Show OperationSize := show_N.
 
 Section S.
 Implicit Type s : OperationSize.
-Variant op := old s (_:symbol) | const (_ : Z) | add s | addcarry s | subborrow s | addoverflow s | neg s | shl s | shr s | sar s | rcr s | and s | or s | xor s | slice (lo sz : N) | mul s | set_slice (lo sz : N) | selectznz | iszero (* | ... *)
+Variant op := old s (_:symbol) | const (_ : Z) | add s | addcarry s | sub s | subborrow s | addoverflow s | neg s | shl s | shr s | sar s | rcr s | and s | or s | xor s | slice (lo sz : N) | mul s | set_slice (lo sz : N) | selectznz | iszero (* | ... *)
   | addZ | mulZ | negZ | shlZ | shrZ | andZ | orZ | xorZ | addcarryZ s | subborrowZ s.
 Definition op_beq a b := if op_eq_dec a b then true else false.
 End S.
@@ -103,6 +103,7 @@ Global Instance Show_op : Show op := fun o =>
   | const n => "const " ++ show n
   | add s => "add " ++ show s
   | addcarry s => "addcarry " ++ show s
+  | sub s => "sub" ++ show s
   | subborrow s => "subborrow " ++ show s
   | addoverflow s => "addoverflow " ++ show s
   | neg s => "neg " ++ show s
@@ -136,6 +137,7 @@ Definition show_op_subscript : Show op := fun o =>
   | const n => "const " ++ show n
   | add s => "add" ++ String.to_subscript (show s)
   | addcarry s => "addcarry" ++ String.to_subscript (show s)
+  | sub s => "sub" ++ String.to_subscript (show s)
   | subborrow s => "subborrow" ++ String.to_subscript (show s)
   | addoverflow s => "addoverflow" ++ String.to_subscript (show s)
   | neg s => "neg" ++ String.to_subscript (show s)
@@ -651,6 +653,7 @@ Section WithContext.
       => let id := invert_Some (identity o) in
          let o := invert_Some (op_to_Z_binop o) in
          Some (keep s (List.fold_right o id args))
+		| sub s, [a; b] => Some (keep s (a - b))
     | (addZ|mulZ|andZ|orZ|xorZ) as o, args
       => let id := invert_Some (identity o) in
          let o := invert_Some (op_to_Z_binop o) in
@@ -668,6 +671,10 @@ Section WithContext.
     | subborrowZ s, cons a args' => Some (- Z.shiftr (a - List.fold_right Z.add 0 args') (Z.of_N s))
     | _, _ => None
     end%Z.
+
+  Definition interprets_as_binop (o : op) (f : Z -> Z -> Z) : Prop :=
+    forall a b, interp_op o [a; b] = Some (f a b).
+
 End WithContext.
 Definition interp0_op := interp_op (fun _ => None).
 
@@ -715,6 +722,7 @@ Section bound_node_via_PHOAS.
   Definition op_to_PHOAS_binop (o : op) : option _
     := match o with
        | add _ => Some ident.Z_add
+			 | sub _ => Some ident.Z_sub
        | shl _ => Some ident.Z_shiftl
        | shr _ => Some ident.Z_shiftr
        | and _ => Some ident.Z_land
@@ -744,6 +752,7 @@ Section bound_node_via_PHOAS.
   Definition op_to_bounds (o : op) : option _
     := match o with
        | add s
+			 | sub s
        | shl s
        | shr s
        | and s
@@ -755,6 +764,7 @@ Section bound_node_via_PHOAS.
        | _ => None
        end%zrange.
 
+	(* take in input bounds , output output bounds *)
   Definition op_to_PHOAS_bounds (o : op) : option (list (unit -> option zrange) -> option zrange)
     := let unthunk := List.map (fun x => x tt) in
        match o with
@@ -772,7 +782,7 @@ Section bound_node_via_PHOAS.
          => let id : Z := invert_Some (identity o) in
             let o := interp_PHOAS_op (invert_Some (op_to_PHOAS_binop o)) in
             Some (fun args => fold_right o (Some r[id~>id]) (unthunk args))
-       | (shl _|shr _) as o
+       | (shl _|shr _ |sub _) as o
          => let b : zrange := invert_Some (op_to_bounds o) in
             let o := interp_PHOAS_op (invert_Some (op_to_PHOAS_binop o)) in
             Some (fun args
@@ -4209,32 +4219,23 @@ Definition make_lane {opts : symbolic_options_computed_opt} {descr : description
   l2 <- App (slice (Z.to_N offset) (Z.to_N lane_width), [v2]);
   App (lane_op, [l1; l2]).
 
-(* Low-level: Build list of all lane computations *)
-Definition build_lanes {opts : symbolic_options_computed_opt} {descr : description}
-  (v1 v2 : idx) (lane_op : op) (num_lanes : nat) (lane_width : Z) : list (M idx) :=
-  List.map (fun i => make_lane v1 v2 lane_op i lane_width) (seq 0 num_lanes).
-
-(* Low-level: Combine lanes by threading accumulator through set_slice operations *)
-Fixpoint combine_lanes_aux {opts : symbolic_options_computed_opt} {descr : description}
-  (lanes : list (M idx)) (lane_width : Z) (lane_idx : N) (acc : idx) : M idx :=
-  match lanes with
-  | [] => ret acc
-  | lane :: rest =>
-      lane_val <- lane;
-new_acc <- App (set_slice (lane_idx * Z.to_N lane_width) (Z.to_N lane_width), [acc; lane_val]);
-combine_lanes_aux rest lane_width (lane_idx + 1)%N new_acc
-end.
-
-Definition combine_lanes {opts : symbolic_options_computed_opt} {descr : description}
-  (lanes : list (M idx)) (lane_width : Z) : M idx :=
-  zero <- App (const 0, []);
-combine_lanes_aux lanes lane_width 0%N zero.
+Fixpoint vector_binop_aux {opts : symbolic_options_computed_opt} {descr : description}
+  (v1 v2 : idx) (lane_op : op) (lane_idx : nat) (num_remaining : nat) 
+  (lane_width : Z) (acc : idx) : M idx :=
+  match num_remaining with
+  | O => ret acc
+  | S n =>
+      lane_val <- make_lane v1 v2 lane_op lane_idx lane_width;
+      new_acc <- App (set_slice (N.of_nat lane_idx * Z.to_N lane_width) (Z.to_N lane_width), 
+                      [acc; lane_val]);
+      vector_binop_aux v1 v2 lane_op (S lane_idx) n lane_width new_acc
+  end.
 
 (* Mid-level: Perform lane-parallel binary operation on two DAG indices *)
 Definition vector_binop_idx {opts : symbolic_options_computed_opt} {descr : description}
   (v1 v2 : idx) (lane_op : op) (num_lanes : nat) (lane_width : Z) : M idx :=
-  let lanes := build_lanes v1 v2 lane_op num_lanes lane_width in
-  combine_lanes lanes lane_width.
+  zero <- App (const 0, []);
+  vector_binop_aux v1 v2 lane_op 0 num_lanes lane_width zero.
 
 (* High-level: Complete lane-parallel vector instruction (GetOperand -> compute -> SetOperand) *)
 Definition SymexVectorBinOp {opts : symbolic_options_computed_opt} {descr : description}
@@ -4262,6 +4263,7 @@ Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:
   | (mov | movzx | movabs | movdqa | movdqu | movq | movd | movups), [dst; src] => (* Note: unbundle when switching from N to Z *)
     v <- GetOperand src;
     SetOperand dst v
+
   | vmovq, [dst; src] => (* this is technically innacurate - we should be zeroing upper bits, but for now this is a starting point. *)
     (* vmovq always operates on 64 bits *)
     v <- GetOperand (s:=64) src; (* gets the full register *)
@@ -4269,6 +4271,20 @@ Definition SymexNormalInstruction {opts : symbolic_options_computed_opt} {descr:
     SetOperand (s:=64) dst v
   | vpaddq, [dst; src1; src2] => (* packed add of quadwords - no flags affected *)
       SymbolicVector.SymexVectorBinOp dst src1 src2 (add 64) 4 64
+  | vpsubq, [dst; src1; src2] => (* packed subtract quadwords *)
+      SymbolicVector.SymexVectorBinOp dst src1 src2 (sub 64) 4 64
+  | vpandq, [dst; src1; src2] => (* packed bitwise AND quadwords *)
+      SymbolicVector.SymexVectorBinOp dst src1 src2 (and 64) 4 64
+  | vporq, [dst; src1; src2] => (* packed bitwise OR quadwords *)
+      SymbolicVector.SymexVectorBinOp dst src1 src2 (or 64) 4 64
+  | vpxorq, [dst; src1; src2] => (* packed bitwise XOR quadwords *)
+      SymbolicVector.SymexVectorBinOp dst src1 src2 (xor 64) 4 64
+  (* 32-bit lane versions (8 lanes in 256-bit register) *)
+  | vpaddd, [dst; src1; src2] => (* packed add doublewords *)
+      SymbolicVector.SymexVectorBinOp dst src1 src2 (add 32) 8 32
+  | vpsubd, [dst; src1; src2] => (* packed subtract doublewords *)
+      SymbolicVector.SymexVectorBinOp dst src1 src2 (sub 32) 8 32
+
   | xchg, [a; b] => (* Note: unbundle when switching from N to Z *)
     va <- GetOperand a;
     vb <- GetOperand b;

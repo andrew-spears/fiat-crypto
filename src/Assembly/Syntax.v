@@ -209,6 +209,12 @@ Inductive OpCode :=
 (* Vectorized opcodes *)
 | vpaddq    (* Vector packed add quadword integers *)
 | vmovq     (* Vector move quadword *)
+| vpsubq
+| vpandq
+| vporq
+| vpxorq
+| vpaddd
+| vpsubd
 .
 
 Derive OpCode_Listable SuchThat (@FinitelyListable OpCode OpCode_Listable) As OpCode_FinitelyListable.
@@ -300,6 +306,12 @@ Definition accesssize_of_declaration (opc : OpCode) : option AccessSize :=
   | xor
   | vpaddq
   | vmovq
+	| vpsubq
+  | vpandq
+  | vporq
+  | vpxorq
+  | vpaddd
+  | vpsubd
     => None
   end.
 
